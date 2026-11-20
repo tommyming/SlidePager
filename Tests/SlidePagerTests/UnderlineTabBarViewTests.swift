@@ -1,8 +1,10 @@
-import XCTest
+import UIKit
+import Testing
 @testable import SlidePager
 
 @MainActor
-final class UnderlineTabBarViewTests: XCTestCase {
+@Suite(.tags(.uiKitHeadless))
+struct UnderlineTabBarViewTests {
 
     private func makeLaidOutBar(titles: [String]) -> UnderlineTabBarView {
         let bar = UnderlineTabBarView(titles: titles)
@@ -11,53 +13,7 @@ final class UnderlineTabBarViewTests: XCTestCase {
         return bar
     }
 
-    func testReloadBuildsButtonsAndSelectsFirst() {
-        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
-        XCTAssertEqual(bar.buttons.count, 3)
-        XCTAssertEqual(bar.selectedIndex, 0)
-        XCTAssertTrue(bar.buttons[0].isSelected)
-        XCTAssertFalse(bar.buttons[1].isSelected)
-        XCTAssertFalse(bar.buttons[2].isSelected)
-    }
-
-    func testSetSelectedIndexUpdatesSelection() {
-        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
-        bar.setSelectedIndex(2, animated: false)
-        XCTAssertEqual(bar.selectedIndex, 2)
-        XCTAssertTrue(bar.buttons[2].isSelected)
-        XCTAssertFalse(bar.buttons[0].isSelected)
-    }
-
-    func testReloadTabsClampsSelection() {
-        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
-        bar.setSelectedIndex(2, animated: false)
-        bar.reloadTabs(titles: ["Only"])
-        XCTAssertEqual(bar.selectedIndex, 0)
-        XCTAssertEqual(bar.buttons.count, 1)
-        XCTAssertTrue(bar.buttons[0].isSelected)
-    }
-
-    func testSelectionCallbackFires() {
-        let bar = makeLaidOutBar(titles: ["One", "Two"])
-        var selected: Int?
-        bar.onSelection = { selected = $0 }
-        bar.buttons[1].onSelect?(1)
-        XCTAssertEqual(selected, 1)
-    }
-
-    func testTransitionProgressFollowsBetweenTabs() {
-        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
-        bar.setSelectedIndex(0, animated: false)
-        let start = underlineMidX(in: bar)
-        bar.setTransitionProgress(from: 0, to: 1, progress: 1)
-        let end = underlineMidX(in: bar)
-        bar.setTransitionProgress(from: 0, to: 1, progress: 0.5)
-        let mid = underlineMidX(in: bar)
-
-        XCTAssertGreaterThan(end, start)
-        XCTAssertEqual(mid, (start + end) / 2, accuracy: 1)
-    }
-
+    /// Finds the 3pt underline indicator by shape.
     private func underlineView(in bar: UnderlineTabBarView) -> UIView? {
         func find(in view: UIView) -> UIView? {
             if abs(view.bounds.height - 3) < 0.5, view.bounds.width > 0, !(view is UIScrollView) {
@@ -71,42 +27,84 @@ final class UnderlineTabBarViewTests: XCTestCase {
         return find(in: bar)
     }
 
-    private func underlineMidX(in bar: UnderlineTabBarView) -> CGFloat {
-        guard let underline = underlineView(in: bar) else {
-            XCTFail("missing underline")
-            return 0
-        }
-        return underline.frame.midX
+    private func underlineMidX(in bar: UnderlineTabBarView) throws -> CGFloat {
+        try #require(underlineView(in: bar)).frame.midX
     }
 
-    func testInitialUnderlineSitsUnderTheFirstTab() {
+    @Test func `Reload builds buttons and selects first`() {
         let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
-        let underline = underlineView(in: bar)
-        XCTAssertNotNil(underline)
-        XCTAssertFalse(underline?.isHidden ?? true)
-        XCTAssertGreaterThan(underline?.bounds.width ?? 0, 0)
-        let firstMidX = bar.buttons[0].convert(CGPoint(x: bar.buttons[0].bounds.midX, y: 0), to: bar).x
-        XCTAssertEqual(underline?.frame.midX ?? 0, firstMidX, accuracy: 1)
+        #expect(bar.buttons.count == 3)
+        #expect(bar.selectedIndex == 0)
+        #expect(bar.buttons[0].isSelected)
+        #expect(!bar.buttons[1].isSelected)
+        #expect(!bar.buttons[2].isSelected)
     }
 
-    func testLeadingPacksTabsFromTheLeadingEdge() {
+    @Test func `Set selected index updates selection`() {
+        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
+        bar.setSelectedIndex(2, animated: false)
+        #expect(bar.selectedIndex == 2)
+        #expect(bar.buttons[2].isSelected)
+        #expect(!bar.buttons[0].isSelected)
+    }
+
+    @Test func `Reload tabs clamps selection`() {
+        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
+        bar.setSelectedIndex(2, animated: false)
+        bar.reloadTabs(titles: ["Only"])
+        #expect(bar.selectedIndex == 0)
+        #expect(bar.buttons.count == 1)
+        #expect(bar.buttons[0].isSelected)
+    }
+
+    @Test func `Selection callback fires`() {
+        let bar = makeLaidOutBar(titles: ["One", "Two"])
+        var selected: Int?
+        bar.onSelection = { selected = $0 }
+        bar.buttons[1].onSelect?(1)
+        #expect(selected == 1)
+    }
+
+    @Test func `Transition progress follows between tabs`() throws {
+        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
+        bar.setSelectedIndex(0, animated: false)
+        let start = try underlineMidX(in: bar)
+        bar.setTransitionProgress(from: 0, to: 1, progress: 1)
+        let end = try underlineMidX(in: bar)
+        bar.setTransitionProgress(from: 0, to: 1, progress: 0.5)
+        let mid = try underlineMidX(in: bar)
+
+        #expect(end > start)
+        #expect(abs(mid - (start + end) / 2) < 1)
+    }
+
+    @Test func `Initial underline sits under the first tab`() throws {
+        let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
+        let underline = try #require(underlineView(in: bar))
+        #expect(!underline.isHidden)
+        #expect(underline.bounds.width > 0)
+        let firstMidX = bar.buttons[0].convert(CGPoint(x: bar.buttons[0].bounds.midX, y: 0), to: bar).x
+        #expect(abs(underline.frame.midX - firstMidX) < 1)
+    }
+
+    @Test func `Leading packs tabs from the leading edge`() {
         let bar = makeLaidOutBar(titles: ["One", "Two"])
         bar.distribution = .leading
         bar.layoutIfNeeded()
-        XCTAssertLessThan(bar.buttons[1].frame.maxX, bar.bounds.width - 40)
+        #expect(bar.buttons[1].frame.maxX < bar.bounds.width - 40)
     }
 
-    func testFillEquallySharesTheBarWidth() {
+    @Test func `Fill equally shares the bar width`() {
         let bar = makeLaidOutBar(titles: ["One", "Two", "Three"])
         bar.distribution = .fillEqually
         bar.layoutIfNeeded()
         let widths = bar.buttons.map(\.bounds.width)
-        XCTAssertEqual(widths[0], widths[1], accuracy: 1)
-        XCTAssertEqual(widths[1], widths[2], accuracy: 1)
-        XCTAssertGreaterThan(widths[0], 60)
+        #expect(abs(widths[0] - widths[1]) < 1)
+        #expect(abs(widths[1] - widths[2]) < 1)
+        #expect(widths[0] > 60)
     }
 
-    func testPreferredHeightIsPositive() {
-        XCTAssertGreaterThan(makeLaidOutBar(titles: ["One"]).preferredHeight, 0)
+    @Test func `Preferred height is positive`() {
+        #expect(makeLaidOutBar(titles: ["One"]).preferredHeight > 0)
     }
 }

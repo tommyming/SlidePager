@@ -1,4 +1,5 @@
-import XCTest
+import UIKit
+import Testing
 @testable import SlidePager
 
 private final class TestListPage: UIViewController, SlidePagerPage {
@@ -49,7 +50,8 @@ private final class DelegateRecorder: SlidePagerDelegate {
 }
 
 @MainActor
-final class SlidePagerViewControllerTests: XCTestCase {
+@Suite(.tags(.uiKitHeadless))
+struct SlidePagerViewControllerTests {
 
     private func makePager() -> SlidePagerViewController {
         let pages = [
@@ -72,17 +74,17 @@ final class SlidePagerViewControllerTests: XCTestCase {
         pager.view.layoutIfNeeded()
     }
 
-    func testInitialSelectionAndStickyState() {
+    @Test func `Initial selection and sticky state`() {
         let pager = makePager()
         load(pager)
 
-        XCTAssertEqual(pager.selectedIndex, 0)
-        XCTAssertEqual(pager.stickyState, .expanded)
-        XCTAssertEqual(pager.currentHeaderHeight, 200)
-        XCTAssertEqual(pager.pages.count, 3)
+        #expect(pager.selectedIndex == 0)
+        #expect(pager.stickyState == .expanded)
+        #expect(pager.currentHeaderHeight == 200)
+        #expect(pager.pages.count == 3)
     }
 
-    func testProgrammaticSelectNotifiesDelegate() {
+    @Test func `Programmatic select notifies the delegate`() {
         let pager = makePager()
         load(pager)
 
@@ -90,11 +92,11 @@ final class SlidePagerViewControllerTests: XCTestCase {
         pager.delegate = recorder
         pager.selectPage(at: 2, animated: false)
 
-        XCTAssertEqual(pager.selectedIndex, 2)
-        XCTAssertEqual(recorder.transitions, [2])
+        #expect(pager.selectedIndex == 2)
+        #expect(recorder.transitions == [2])
     }
 
-    func testSelectingSamePageIsNoOp() {
+    @Test func `Selecting the same page is a no-op`() {
         let pager = makePager()
         load(pager)
         let recorder = DelegateRecorder()
@@ -102,11 +104,11 @@ final class SlidePagerViewControllerTests: XCTestCase {
 
         pager.selectPage(at: 0, animated: false)
 
-        XCTAssertEqual(pager.selectedIndex, 0)
-        XCTAssertTrue(recorder.transitions.isEmpty)
+        #expect(pager.selectedIndex == 0)
+        #expect(recorder.transitions.isEmpty)
     }
 
-    func testStickyStateChangesFireDelegate() {
+    @Test func `Sticky state changes fire the delegate`() {
         let pager = makePager()
         load(pager)
 
@@ -115,15 +117,15 @@ final class SlidePagerViewControllerTests: XCTestCase {
 
         // Collapse fully by driving the outer scroll view to its sticky point.
         pager.outerScrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
-        XCTAssertEqual(pager.stickyState, .collapsed)
-        XCTAssertTrue(recorder.states.contains(.collapsed))
+        #expect(pager.stickyState == .collapsed)
+        #expect(recorder.states.contains(.collapsed))
 
         // And expand again.
         pager.outerScrollView.setContentOffset(CGPoint(x: 0, y: 0), animated: false)
-        XCTAssertEqual(pager.stickyState, .expanded)
+        #expect(pager.stickyState == .expanded)
     }
 
-    func testExpandedHeaderPinsPageScrolling() {
+    @Test func `Expanded header pins page scrolling`() {
         let pager = makePager()
         load(pager)
 
@@ -133,10 +135,10 @@ final class SlidePagerViewControllerTests: XCTestCase {
         // While the header is visible, any attempt to scroll the page is
         // pinned back to its top resting offset.
         page.tableView.contentOffset = CGPoint(x: 0, y: 80)
-        XCTAssertEqual(page.tableView.contentOffset.y, 0, accuracy: ScrollRules.epsilon + 0.1)
+        #expect(abs(page.tableView.contentOffset.y) < ScrollRules.epsilon + 0.1)
     }
 
-    func testCollapsedHeaderLetsPageScroll() {
+    @Test func `Collapsed header lets the page scroll`() {
         let pager = makePager()
         load(pager)
 
@@ -144,58 +146,58 @@ final class SlidePagerViewControllerTests: XCTestCase {
         page.tableView.contentSize = CGSize(width: 390, height: 4000)
 
         pager.outerScrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
-        XCTAssertEqual(pager.stickyState, .collapsed)
+        #expect(pager.stickyState == .collapsed)
 
         page.tableView.contentOffset = CGPoint(x: 0, y: 80)
-        XCTAssertEqual(page.tableView.contentOffset.y, 80, accuracy: ScrollRules.epsilon + 0.1)
-        XCTAssertEqual(pager.outerScrollView.contentOffset.y, 200, accuracy: ScrollRules.epsilon + 0.1)
+        #expect(abs(page.tableView.contentOffset.y - 80) < ScrollRules.epsilon + 0.1)
+        #expect(abs(pager.outerScrollView.contentOffset.y - 200) < ScrollRules.epsilon + 0.1)
     }
 
-    func testOuterContentExtendsByHeaderHeight() {
+    @Test func `Outer content extends by the header height`() {
         let pager = makePager()
         load(pager)
 
-        XCTAssertGreaterThan(
-            pager.outerScrollView.contentSize.height,
-            pager.outerScrollView.bounds.height + 100,
+        #expect(
+            pager.outerScrollView.contentSize.height > pager.outerScrollView.bounds.height + 100,
             "outer content must be taller than the viewport or a drag cannot collapse the header"
         )
     }
 
-    func testExpandedHeaderPagePanYieldsSoHeaderCanCollapse() {
+    @Test func `Expanded header page pan yields so the header can collapse`() {
         let pager = makePager()
         load(pager)
         let page = pager.pages[0] as! TestListPage
 
         // iOS requires the scroll view to remain its pan's delegate.
-        XCTAssertTrue(page.tableView.panGestureRecognizer.delegate === page.tableView)
-        XCTAssertFalse(
-            page.tableView.gestureRecognizerShouldBegin(page.tableView.panGestureRecognizer),
+        #expect(page.tableView.panGestureRecognizer.delegate === page.tableView)
+        #expect(
+            !page.tableView.gestureRecognizerShouldBegin(page.tableView.panGestureRecognizer),
             "while the header is expanded, a vertical drag on the page must fail so the header can collapse"
         )
     }
 
-    func testCollapsePanCoversThePageController() {
+    @Test func `Collapse pan covers the page controller`() {
         let pager = makePager()
         load(pager)
-        XCTAssertTrue(
+        #expect(
             gestureRecognizers(in: pager.view).contains { $0.name == StickyPanBypass.collapsePanName },
             "a drag on the page controller needs a pan that can collapse the header"
         )
     }
 
-    func testPagingScrollViewStaysItsOwnPanDelegate() {
+    @Test func `Paging scroll view stays its own pan delegate`() throws {
         let pager = makePager()
         load(pager)
-        let paging = scrollViews(in: pager.view).first {
-            $0 !== pager.outerScrollView && !($0 is UITableView) && $0.bounds.height > 100
-        }
-        XCTAssertNotNil(paging)
-        XCTAssertTrue(paging!.panGestureRecognizer.delegate === paging)
-        XCTAssertFalse(paging!.delaysContentTouches)
+        let paging = try #require(
+            scrollViews(in: pager.view).first {
+                $0 !== pager.outerScrollView && !($0 is UITableView) && $0.bounds.height > 100
+            }
+        )
+        #expect(paging.panGestureRecognizer.delegate === paging)
+        #expect(!paging.delaysContentTouches)
     }
 
-    func testPagingScrollViewTracksWithOuterPan() {
+    @Test func `Paging scroll view tracks with the outer pan`() throws {
         let pager = makePager()
         load(pager)
 
@@ -204,16 +206,70 @@ final class SlidePagerViewControllerTests: XCTestCase {
         }
         // The page controller's queuing scroll view is the tall horizontal one,
         // not the tab bar's short scroller.
-        let pagingScrollView = candidates.first { $0.bounds.height > 100 }
-        XCTAssertNotNil(pagingScrollView, "UIPageViewController should host a horizontal scroll view")
+        let pagingScrollView = try #require(
+            candidates.first { $0.bounds.height > 100 },
+            "UIPageViewController should host a horizontal scroll view"
+        )
         let outerPan = pager.outerScrollView.panGestureRecognizer
         let allowed = outerPan.delegate?.gestureRecognizer?(
             outerPan,
-            shouldRecognizeSimultaneouslyWith: pagingScrollView!.panGestureRecognizer
+            shouldRecognizeSimultaneouslyWith: pagingScrollView.panGestureRecognizer
         )
-        XCTAssertEqual(allowed, true)
-        XCTAssertTrue(pagingScrollView!.isScrollEnabled)
+        #expect(allowed == true)
+        #expect(pagingScrollView.isScrollEnabled)
     }
+
+    @Test func `Outer pan recognizes simultaneously with the page pan`() {
+        let pager = makePager()
+        load(pager)
+        let page = pager.pages[0] as! TestListPage
+
+        let outerPan = pager.outerScrollView.panGestureRecognizer
+        let pagePan = page.tableView.panGestureRecognizer
+        let allowed = outerPan.delegate?.gestureRecognizer?(
+            outerPan,
+            shouldRecognizeSimultaneouslyWith: pagePan
+        )
+        #expect(
+            allowed == true,
+            "the outer pan delegate must allow the page pan to track so the header can collapse first"
+        )
+    }
+
+    @Test func `Header height update preserves the pinned state`() {
+        let pager = makePager()
+        load(pager)
+
+        // Collapse fully (outer offset == header height).
+        pager.outerScrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
+        #expect(pager.stickyState == .collapsed)
+
+        // Growing the header while collapsed keeps it collapsed.
+        pager.updateHeaderHeight(300, animated: false)
+        pager.view.layoutIfNeeded()
+        #expect(pager.currentHeaderHeight == 300)
+        #expect(pager.stickyState == .collapsed)
+
+        // Shrinking while collapsed keeps it collapsed, too.
+        pager.updateHeaderHeight(120, animated: false)
+        pager.view.layoutIfNeeded()
+        #expect(pager.currentHeaderHeight == 120)
+        #expect(pager.stickyState == .collapsed)
+    }
+
+    @Test func `No header means the tab bar pins immediately`() {
+        let pages = [TestListPage(title: "One"), TestListPage(title: "Two")]
+        let pager = SlidePagerViewController(
+            tabBar: UnderlineTabBarView(titles: ["One", "Two"]),
+            pages: pages
+        )
+        load(pager)
+
+        #expect(pager.currentHeaderHeight == 0)
+        #expect(pager.stickyState == .collapsed)
+    }
+
+    // MARK: - Traversal helpers
 
     private func gestureRecognizers(in view: UIView) -> [UIGestureRecognizer] {
         var found = view.gestureRecognizers ?? []
@@ -232,56 +288,5 @@ final class SlidePagerViewControllerTests: XCTestCase {
             found.append(contentsOf: scrollViews(in: subview))
         }
         return found
-    }
-
-    func testOuterPanRecognizesSimultaneouslyWithPagePan() {
-        let pager = makePager()
-        load(pager)
-        let page = pager.pages[0] as! TestListPage
-
-        let outerPan = pager.outerScrollView.panGestureRecognizer
-        let pagePan = page.tableView.panGestureRecognizer
-        let allowed = outerPan.delegate?.gestureRecognizer?(
-            outerPan,
-            shouldRecognizeSimultaneouslyWith: pagePan
-        )
-        XCTAssertEqual(
-            allowed,
-            true,
-            "outer pan delegate is \(String(describing: type(of: outerPan.delegate))); it must allow the page pan to track so the header can collapse first"
-        )
-    }
-
-    func testHeaderHeightUpdatePreservesPinnedState() {
-        let pager = makePager()
-        load(pager)
-
-        // Collapse fully (outer offset == header height).
-        pager.outerScrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
-        XCTAssertEqual(pager.stickyState, .collapsed)
-
-        // Growing the header while collapsed keeps it collapsed.
-        pager.updateHeaderHeight(300, animated: false)
-        pager.view.layoutIfNeeded()
-        XCTAssertEqual(pager.currentHeaderHeight, 300)
-        XCTAssertEqual(pager.stickyState, .collapsed)
-
-        // Shrinking while collapsed keeps it collapsed, too.
-        pager.updateHeaderHeight(120, animated: false)
-        pager.view.layoutIfNeeded()
-        XCTAssertEqual(pager.currentHeaderHeight, 120)
-        XCTAssertEqual(pager.stickyState, .collapsed)
-    }
-
-    func testNoHeaderTabBarPinsImmediately() {
-        let pages = [TestListPage(title: "One"), TestListPage(title: "Two")]
-        let pager = SlidePagerViewController(
-            tabBar: UnderlineTabBarView(titles: ["One", "Two"]),
-            pages: pages
-        )
-        load(pager)
-
-        XCTAssertEqual(pager.currentHeaderHeight, 0)
-        XCTAssertEqual(pager.stickyState, .collapsed)
     }
 }
