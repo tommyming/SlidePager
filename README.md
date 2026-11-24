@@ -1,6 +1,6 @@
 # SlidePager
 
-**Version 1.0.0.** SlidePager is a UIKit container with three parts:
+**Version 1.0.1.** SlidePager is a UIKit container with three parts:
 
 - a header that scrolls out of view
 - a tab bar that stays below the top safe-area inset
@@ -25,6 +25,7 @@ While the header is visible, the outer scroll view scrolls vertically. After the
 - [How the scroll coordination works](#how-the-scroll-coordination-works)
 - [Custom tab bars](#custom-tab-bars)
 - [Headers: fixed and dynamic heights](#headers-fixed-and-dynamic-heights)
+- [Configuring state](#configuring-state)
 - [Observing state](#observing-state)
 - [Running the demo](#running-the-demo)
 - [Running the tests](#running-the-tests)
@@ -46,7 +47,7 @@ While the header is visible, the outer scroll view scrolls vertically. After the
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.0"),
+    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.1"),
 ],
 targets: [
     .target(
@@ -58,7 +59,7 @@ targets: [
 ]
 ```
 
-`1.0.0` is the git tag. Swift Package Manager does not read a version from `Package.swift`. The tag must exist on the repository before `from:` resolves.
+`1.0.1` is the git tag. Swift Package Manager does not read a version from `Package.swift`. The tag must exist on the repository before `from:` resolves.
 
 ## Quick start
 
@@ -88,6 +89,8 @@ pager.delegate = self
 // Host it like any view controller, e.g.:
 navigationController?.pushViewController(pager, animated: true)
 ```
+
+`SlidePagerViewController` is an `open` class. Its state properties are `open`, so another module can assign them and a subclass can override them. See [Configuring state](#configuring-state).
 
 A page that joins the nested scroll returns its main scroll view:
 
@@ -164,7 +167,7 @@ public protocol SlidePagerTabBar: AnyObject {
 - The container calls `setSelectedIndex` after a swipe or a programmatic change. Your tab bar stays in sync.
 - `setTransitionProgress` runs while the user swipes between pages. `progress` is `0` at `from` and `1` at `to`. The default does nothing. A custom tab bar can omit it and update only in `setSelectedIndex`.
 
-`UnderlineTabBarView` is the built-in tab bar. It shows a sliding underline, in the same style as Twitter and Instagram profile tabs. You can set `underlineColor`, `titleFont`, `tabTitleColor`, `selectedTabTitleColor`, and `distribution`.
+`UnderlineTabBarView` is an `open` class. It shows a sliding underline, in the same style as Twitter and Instagram profile tabs. Set or override `underlineColor`, `titleFont`, `tabTitleColor`, `selectedTabTitleColor`, and `distribution` at any time. `preferredHeight` is get-only. Override it in a subclass to reserve a different height. There is no setter.
 
 `.leading` is the default. Tabs use the width of their titles, start at the leading edge, and scroll when they do not fit. `.fillEqually` gives every tab the same width. The underline sits under the selected tab on the first layout. It moves with the page during a swipe.
 
@@ -182,7 +185,45 @@ You can change the height later. A profile header that grows is one example:
 pager.updateHeaderHeight(320, animated: true)
 ```
 
+Assign `headerView` to replace the header. Pass `nil` to remove it. Assign `currentHeaderHeight` to set an explicit height without animation. That is the same as `updateHeaderHeight(_:animated:)` with `animated: false`.
+
 A fully collapsed header stays fully collapsed. In every other state, the pager keeps the current collapse distance. It clamps that distance to the new range.
+
+## Configuring state
+
+The public state is `open`. Assignment from another module configures the pager. It is not a raw stored write. Call through to `super` when you override a property, or the pager does not apply the change.
+
+| Property | What assignment does |
+|---|---|
+| `pages` | Replaces the pages and reloads tab titles from each page `title`. The array must not be empty. The current index is kept when it is still valid, and clamped otherwise. |
+| `selectedIndex` | Selects that page without animation. Same as `selectPage(at:animated:)` with `animated: false`. An index outside `pages` is ignored. |
+| `stickyState` | Scrolls the header to that collapse. `.expanded` opens it. `.collapsed` pins the tab bar. `.partiallyCollapsed` stops in between. |
+| `delegate` | Sets the observer for tab, page, and sticky events. |
+| `headerView` | Installs a new header above the tab bar. `nil` removes it. |
+| `tabBarView` | Installs a new tab bar, reloads titles from `pages`, and keeps the current selection. |
+| `currentHeaderHeight` | Sets an explicit height without animation. Same as `updateHeaderHeight(_:animated:)` with `animated: false`. A fully collapsed header stays collapsed. |
+
+```swift
+pager.pages = [posts, media]
+pager.selectedIndex = 1
+pager.stickyState = .collapsed
+pager.currentHeaderHeight = 180
+pager.headerView = ProfileHeaderView()
+pager.tabBarView = UnderlineTabBarView(titles: ["Posts", "Media"])
+```
+
+A subclass in another module can override any of those properties:
+
+```swift
+final class LoggingPager: SlidePagerViewController {
+    override var stickyState: StickyState {
+        get { super.stickyState }
+        set { super.stickyState = newValue }
+    }
+}
+```
+
+`StickyState` is an enum, so `progress` stays `public`. Protocols stay `public` too. Swift only allows `open` on classes and overridable class members.
 
 ## Observing state
 
@@ -206,7 +247,7 @@ func slidePager(_ pager: SlidePagerViewController, didChangeStickyState state: S
 
 All three methods are optional. `SlidePagerDelegate` is `@MainActor`. `didChangeStickyState` fires continuously while the header collapses or expands.
 
-You can also call `selectPage(at:animated:)` and read `selectedIndex`, `stickyState`, and `currentHeaderHeight`.
+You can also call `selectPage(at:animated:)` and read `selectedIndex`, `stickyState`, and `currentHeaderHeight`. To change that state from outside the module, assign the properties described in [Configuring state](#configuring-state).
 
 ## Running the demo
 
@@ -227,49 +268,19 @@ xcodebuild -project Example/SlidePagerDemoApp.xcodeproj \
 
 A destination with only `name` means `OS=latest`. Pass `OS=`, or use a simulator that is on the newest runtime. List simulators with `xcrun simctl list devices available`.
 
-You can also host the demo in your own app. The `SlidePagerDemo` library product contains `DemoViewController`:
-
-```swift
-import SlidePagerDemo
-
-// SceneDelegate.swift
-func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
-           options connectionOptions: UIScene.ConnectionOptions) {
-    guard let windowScene = scene as? UIWindowScene else { return }
-    let window = UIWindow(windowScene: windowScene)
-    window.rootViewController = UINavigationController(rootViewController: DemoViewController())
-    window.makeKeyAndVisible()
-    self.window = window
-}
-```
-
-Or from SwiftUI:
-
-```swift
-import SwiftUI
-import SlidePagerDemo
-
-struct DemoHost: UIViewControllerRepresentable {
-    func makeUIViewController(context: Context) -> UIViewController {
-        UINavigationController(rootViewController: DemoViewController())
-    }
-    func updateUIViewController(_ vc: UIViewController, context: Context) {}
-}
-```
-
 ## Running the tests
 
 UIKit needs an iOS destination. Plain `swift test` on macOS cannot link UIKit.
 
 ```sh
 xcodebuild test \
-    -scheme SlidePager-Package \
+    -scheme SlidePager \
     -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.0'
 ```
 
 The destination rule is the same as the demo. A bare `name` means `OS=latest`.
 
-`SlidePager-Package` is the aggregate scheme that Swift Package Manager generates. It includes the test target. The `SlidePager` scheme only builds the library.
+`SlidePager` is the scheme Swift Package Manager generates for this package. It builds the library and runs the test target.
 
 ## Resizability
 

@@ -2,6 +2,11 @@ import UIKit
 import Testing
 @testable import SlidePager
 
+/// Proves styling properties are `open` and overridable outside the module.
+private final class TallUnderlineTabBar: UnderlineTabBarView {
+    override var preferredHeight: CGFloat { 64 }
+}
+
 /// `UnderlineTabBarView` behavior not covered by `UnderlineTabBarViewTests`:
 /// styling propagation, invalid indices, progress clamping, and empty reloads.
 @MainActor
@@ -30,6 +35,14 @@ struct UnderlineTabBarStylingTests {
     }
 
     // MARK: - Styling
+
+    @Test("a subclass can override the open preferred height")
+    func subclassOverridesPreferredHeight() {
+        let bar = TallUnderlineTabBar(titles: ["One"])
+        #expect(bar.preferredHeight == 64)
+        bar.underlineColor = .systemPink
+        #expect(bar.underlineColor == .systemPink)
+    }
 
     @Test("style properties propagate to every tab")
     func stylingPropagates() {

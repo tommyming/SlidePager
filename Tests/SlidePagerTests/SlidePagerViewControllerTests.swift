@@ -30,6 +30,20 @@ private final class TestListPage: UIViewController, SlidePagerPage {
     }
 }
 
+/// Proves `pages` is `open`: this subclass lives outside the SlidePager module.
+@MainActor
+private final class OverridingPager: SlidePagerViewController {
+    var assignedPageCounts: [Int] = []
+
+    override var pages: [UIViewController] {
+        get { super.pages }
+        set {
+            assignedPageCounts.append(newValue.count)
+            super.pages = newValue
+        }
+    }
+}
+
 @MainActor
 private final class DelegateRecorder: SlidePagerDelegate {
     var selections: [Int] = []
@@ -255,6 +269,121 @@ struct SlidePagerViewControllerTests {
         pager.view.layoutIfNeeded()
         #expect(pager.currentHeaderHeight == 120)
         #expect(pager.stickyState == .collapsed)
+    }
+
+    @Test func `Assigning pages reloads tabs and shows the replacement`() {
+        let bar = UnderlineTabBarView(titles: ["One", "Two", "Three"])
+        let pager = SlidePagerViewController(
+            header: UIView(),
+            headerHeight: 200,
+            tabBar: bar,
+            pages: [
+                TestListPage(title: "One"),
+                TestListPage(title: "Two"),
+                TestListPage(title: "Three"),
+            ]
+        )
+        load(pager)
+
+        let replacement = TestListPage(title: "Replacement")
+        pager.pages = [replacement]
+        pager.view.layoutIfNeeded()
+
+        #expect(pager.pages.count == 1)
+        #expect(pager.pages[0] === replacement)
+        #expect(pager.selectedIndex == 0)
+        #expect(bar.buttons.map(\.accessibilityLabel) == ["Replacement"])
+    }
+
+    @Test func `Assigning selectedIndex configures the page from outside`() {
+        let pager = makePager()
+        let recorder = DelegateRecorder()
+        pager.delegate = recorder
+
+        pager.selectedIndex = 2
+        load(pager)
+
+        #expect(pager.selectedIndex == 2)
+        #expect(recorder.transitions.isEmpty, "a pre-load assignment is the initial page, not a transition")
+
+        pager.selectedIndex = 1
+        #expect(pager.selectedIndex == 1)
+        #expect(recorder.transitions == [1])
+
+        pager.selectedIndex = 99
+        #expect(pager.selectedIndex == 1)
+        #expect(recorder.transitions == [1])
+    }
+
+    @Test func `Assigning stickyState scrolls the header`() {
+        let pager = makePager()
+        load(pager)
+        let recorder = DelegateRecorder()
+        pager.delegate = recorder
+
+        pager.stickyState = .collapsed
+        #expect(pager.stickyState == .collapsed)
+        #expect(abs(pager.outerScrollView.contentOffset.y - 200) < 1)
+        #expect(recorder.states.contains(.collapsed))
+
+        pager.stickyState = .partiallyCollapsed(progress: 0.25)
+        #expect(abs(pager.outerScrollView.contentOffset.y - 50) < 1)
+        if case .partiallyCollapsed(let progress) = pager.stickyState {
+            #expect(abs(progress - 0.25) < 0.02)
+        } else {
+            Issue.record("expected a partial collapse")
+        }
+
+        pager.stickyState = .expanded
+        #expect(pager.stickyState == .expanded)
+        #expect(abs(pager.outerScrollView.contentOffset.y) < 1)
+    }
+
+    @Test func `Assigning stickyState before load is applied on layout`() {
+        let pager = makePager()
+        pager.stickyState = .collapsed
+        #expect(pager.stickyState == .collapsed)
+
+        load(pager)
+
+        #expect(pager.stickyState == .collapsed)
+        #expect(abs(pager.outerScrollView.contentOffset.y - 200) < 1)
+    }
+
+    @Test func `Assigning header, tab bar, and header height configures the pager`() {
+        let pager = makePager()
+        load(pager)
+
+        let header = UIView()
+        pager.headerView = header
+        #expect(pager.headerView === header)
+        #expect(header.superview != nil)
+
+        let bar = UnderlineTabBarView(titles: ["Unused"])
+        pager.tabBarView = bar
+        pager.view.layoutIfNeeded()
+        #expect(pager.tabBarView === bar)
+        #expect(bar.buttons.map(\.accessibilityLabel) == ["One", "Two", "Three"])
+        #expect(bar.superview != nil)
+
+        pager.currentHeaderHeight = 80
+        pager.view.layoutIfNeeded()
+        #expect(pager.currentHeaderHeight == 80)
+    }
+
+    @Test func `A subclass in another module can override open state`() {
+        let pager = OverridingPager(
+            header: UIView(),
+            headerHeight: 200,
+            tabBar: UnderlineTabBarView(titles: ["One"]),
+            pages: [TestListPage(title: "One")]
+        )
+        let extra = TestListPage(title: "Extra")
+        pager.pages = [TestListPage(title: "One"), extra]
+
+        #expect(pager.assignedPageCounts == [2])
+        #expect(pager.pages.count == 2)
+        #expect(pager.pages[1] === extra)
     }
 
     @Test func `No header means the tab bar pins immediately`() {

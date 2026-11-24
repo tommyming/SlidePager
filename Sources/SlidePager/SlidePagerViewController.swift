@@ -29,28 +29,71 @@ import UIKit
 open class SlidePagerViewController: UIViewController {
 
     // MARK: - Public state
+    //
+    // These properties are `open` so a client module can read, override, and
+    // configure them. Assignment applies the change; call through to `super`
+    // when overriding.
 
     /// The child view controllers, in tab order.
-    public private(set) var pages: [UIViewController]
+    ///
+    /// Assigning replaces the pages and reloads the tab bar. The array must
+    /// not be empty. The current index is kept when it is still valid, and
+    /// clamped otherwise.
+    open var pages: [UIViewController] {
+        get { _pages }
+        set { configurePages(newValue) }
+    }
 
     /// The index of the currently displayed page.
-    public private(set) var selectedIndex: Int = 0
+    ///
+    /// Assigning selects that page without animation, the same as
+    /// `selectPage(at:animated:)` with `animated: false`. An index outside
+    /// `pages` is ignored.
+    open var selectedIndex: Int {
+        get { _selectedIndex }
+        set { configureSelectedIndex(newValue) }
+    }
 
     /// The current sticky state of the header.
-    public private(set) var stickyState: StickyState = .expanded
+    ///
+    /// Assigning scrolls the header to that collapse. `.expanded` opens it,
+    /// `.collapsed` pins the tab bar, and `.partiallyCollapsed` stops in
+    /// between.
+    open var stickyState: StickyState {
+        get { _stickyState }
+        set { configureStickyState(newValue) }
+    }
 
     /// Optional observer for tab, page, and sticky events.
-    public weak var delegate: SlidePagerDelegate?
+    open weak var delegate: SlidePagerDelegate?
 
     /// The header view, if one was provided.
-    public var headerView: UIView? { _headerView }
+    ///
+    /// Assigning installs the new view above the tab bar. Pass `nil` to remove
+    /// the header.
+    open var headerView: UIView? {
+        get { _headerView }
+        set { setHeaderView(newValue) }
+    }
 
     /// The tab bar view.
-    public var tabBarView: SlidePagerTabBarView { _tabBar }
+    ///
+    /// Assigning installs the new bar, reloads titles from `pages`, and keeps
+    /// the current selection.
+    open var tabBarView: SlidePagerTabBarView {
+        get { _tabBar }
+        set { setTabBarView(newValue) }
+    }
 
     /// The current header height, resolved from `updateHeaderHeight(_:animated:)`
     /// or the header's fitting size.
-    public var currentHeaderHeight: CGFloat { resolvedHeaderHeight }
+    ///
+    /// Assigning sets an explicit height without animation, the same as
+    /// `updateHeaderHeight(_:animated:)` with `animated: false`.
+    open var currentHeaderHeight: CGFloat {
+        get { resolvedHeaderHeight }
+        set { updateHeaderHeight(newValue, animated: false) }
+    }
 
     // MARK: - Views
 
@@ -62,8 +105,17 @@ open class SlidePagerViewController: UIViewController {
     private let pageHostView = UIView()
     private let pageViewController: UIPageViewController
 
-    private let _headerView: UIView?
-    private let _tabBar: SlidePagerTabBarView
+    private var _pages: [UIViewController]
+    private var _selectedIndex: Int = 0
+    private var _stickyState: StickyState = .expanded
+    /// Set before the first layout so a pre-load `stickyState` assignment is
+    /// applied once the header height is known.
+    private var requestedStickyState: StickyState?
+    private var _headerView: UIView?
+    private var _tabBar: SlidePagerTabBarView
+    private weak var installedTabBar: UIView?
+    private var tabBarEdgeConstraints: [NSLayoutConstraint] = []
+    private var pageHostTop: NSLayoutConstraint?
 
     // MARK: - Layout state
 
@@ -138,7 +190,7 @@ open class SlidePagerViewController: UIViewController {
         self._headerView = header
         self.explicitHeaderHeight = headerHeight
         self._tabBar = tabBar
-        self.pages = pages
+        self._pages = pages
         self.pageViewController = UIPageViewController(
             transitionStyle: .scroll,
             navigationOrientation: .horizontal
@@ -190,17 +242,22 @@ open class SlidePagerViewController: UIViewController {
             return atTop && pullingDown
         }
 
-        let first = pages[0]
+        let initialIndex = pages.indices.contains(selectedIndex) ? selectedIndex : 0
+        let first = pages[initialIndex]
         pageViewController.setViewControllers([first], direction: .forward, animated: false)
         attachObserversIfPossible(for: first)
-        settleCurrentPage(to: 0, animated: false, notify: false)
+        settleCurrentPage(to: initialIndex, animated: false, notify: false)
     }
 
     open override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         installPanCoordination()
         applyStickyGeometry(preservingCollapse: true)
-        enforceScrollInvariants()
+        if requestedStickyState != nil {
+            applyRequestedStickyStateIfNeeded()
+        } else {
+            enforceScrollInvariants()
+        }
     }
 
     open override func viewSafeAreaInsetsDidChange() {
@@ -236,6 +293,105 @@ open class SlidePagerViewController: UIViewController {
             view.layoutIfNeeded()
         }
         enforceScrollInvariants()
+    }
+
+    // MARK: - External configuration
+
+    private func configurePages(_ newPages: [UIViewController]) {
+        precondition(!newPages.isEmpty, "SlidePagerViewController requires at least one page")
+        if pagesAreIdentical(_pages, newPages) { return }
+        _pages = newPages
+        let index = pages.indices.contains(_selectedIndex) ? _selectedIndex : newPages.count - 1
+        guard isViewLoaded else {
+            _selectedIndex = index
+            return
+        }
+        _tabBar.reloadTabs(titles: tabTitles(for: newPages))
+        let page = newPages[index]
+        let displayed = pageViewController.viewControllers?.first
+        pageViewController.setViewControllers([page], direction: .forward, animated: false)
+        pageObservations.removeAll()
+        let indexChanged = index != _selectedIndex
+        settleCurrentPage(to: index, animated: false, notify: indexChanged)
+        if !indexChanged, displayed !== page {
+            _tabBar.setSelectedIndex(index, animated: false)
+            delegate?.slidePager(self, didTransitionToPageAt: index)
+        }
+    }
+
+    private func configureSelectedIndex(_ index: Int) {
+        guard pages.indices.contains(index) else { return }
+        guard isViewLoaded else {
+            _selectedIndex = index
+            return
+        }
+        transitionToPage(at: index, animated: false, source: .programmatic)
+    }
+
+    private func configureStickyState(_ state: StickyState) {
+        let geometryReady = isViewLoaded && view.bounds.width > 0
+        guard geometryReady else {
+            let changed = _stickyState != state
+            _stickyState = state
+            requestedStickyState = state
+            if changed {
+                delegate?.slidePager(self, didChangeStickyState: state)
+            }
+            return
+        }
+        requestedStickyState = nil
+        applyStickyOffset(for: state)
+    }
+
+    private func applyRequestedStickyStateIfNeeded() {
+        guard let state = requestedStickyState else { return }
+        requestedStickyState = nil
+        configureStickyState(state)
+    }
+
+    private func applyStickyOffset(for state: StickyState) {
+        let target: CGFloat
+        switch state {
+        case .expanded:
+            target = 0
+        case .collapsed:
+            target = maxStickyOffset
+        case .partiallyCollapsed(let progress):
+            let clamped = min(max(progress, 0), 1)
+            target = maxStickyOffset * clamped
+        }
+        if abs(outerScrollView.contentOffset.y - target) > ScrollRules.epsilon {
+            outerScrollView.setContentOffset(CGPoint(x: 0, y: target), animated: false)
+        }
+        enforceScrollInvariants()
+    }
+
+    private func setHeaderView(_ header: UIView?) {
+        guard _headerView !== header else { return }
+        _headerView = header
+        guard headerContainer.superview != nil else { return }
+        installHeaderView()
+        applyStickyGeometry(preservingCollapse: true)
+        enforceScrollInvariants()
+    }
+
+    private func setTabBarView(_ tabBar: SlidePagerTabBarView) {
+        guard _tabBar !== tabBar else { return }
+        _tabBar = tabBar
+        guard isViewLoaded else { return }
+        installTabBar(tabBar)
+        applyStickyGeometry(preservingCollapse: true)
+        enforceScrollInvariants()
+    }
+
+    private func pagesAreIdentical(_ lhs: [UIViewController], _ rhs: [UIViewController]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { $0 === $1 }
+    }
+
+    private func tabTitles(for pages: [UIViewController]) -> [String] {
+        pages.enumerated().map { index, page in
+            page.title ?? "Tab \(index + 1)"
+        }
     }
 
     // MARK: - Configuration
@@ -278,35 +434,58 @@ open class SlidePagerViewController: UIViewController {
             headerContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
         ])
 
-        if let header = _headerView {
-            header.translatesAutoresizingMaskIntoConstraints = false
-            headerContainer.addSubview(header)
-            NSLayoutConstraint.activate([
-                header.topAnchor.constraint(equalTo: headerContainer.topAnchor),
-                header.bottomAnchor.constraint(equalTo: headerContainer.bottomAnchor),
-                header.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor),
-                header.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor),
-            ])
+        installHeaderView()
+    }
+
+    private func installHeaderView() {
+        for subview in headerContainer.subviews {
+            subview.removeFromSuperview()
         }
+        guard let header = _headerView else { return }
+        header.translatesAutoresizingMaskIntoConstraints = false
+        headerContainer.addSubview(header)
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: headerContainer.topAnchor),
+            header.bottomAnchor.constraint(equalTo: headerContainer.bottomAnchor),
+            header.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor),
+        ])
     }
 
     private func configureTabBar() {
-        let tabBar = _tabBar
-        tabBar.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(tabBar)
+        installTabBar(_tabBar)
+    }
+
+    private func installTabBar(_ tabBar: SlidePagerTabBarView) {
+        NSLayoutConstraint.deactivate(tabBarEdgeConstraints)
+        tabBarEdgeConstraints = []
+        if let installed = installedTabBar, installed !== tabBar {
+            installed.removeFromSuperview()
+        }
+        installedTabBar = tabBar
+        _tabBar = tabBar
+        if tabBar.superview !== contentView {
+            tabBar.translatesAutoresizingMaskIntoConstraints = false
+            contentView.addSubview(tabBar)
+        }
+        tabBarHeight?.isActive = false
         tabBarHeight = tabBar.heightAnchor.constraint(equalToConstant: max(1, tabBar.preferredHeight))
-        NSLayoutConstraint.activate([
+        tabBarEdgeConstraints = [
             tabBar.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
             tabBar.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             tabBar.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             tabBarHeight,
-        ])
+        ]
+        NSLayoutConstraint.activate(tabBarEdgeConstraints)
         tabBar.onSelection = { [weak self] index in
             self?.tabBarDidSelect(index)
         }
-        tabBar.reloadTabs(titles: pages.enumerated().map { index, page in
-            page.title ?? "Tab \(index + 1)"
-        })
+        tabBar.reloadTabs(titles: tabTitles(for: pages))
+        guard pageHostView.superview != nil else { return }
+        tabBar.setSelectedIndex(selectedIndex, animated: false)
+        pageHostTop?.isActive = false
+        pageHostTop = pageHostView.topAnchor.constraint(equalTo: tabBar.bottomAnchor)
+        pageHostTop?.isActive = true
     }
 
     private func configurePageViewController() {
@@ -316,8 +495,10 @@ open class SlidePagerViewController: UIViewController {
         pageHostView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(pageHostView)
         pageHostHeight = pageHostView.heightAnchor.constraint(equalToConstant: 0)
+        let pageHostTop = pageHostView.topAnchor.constraint(equalTo: _tabBar.bottomAnchor)
+        self.pageHostTop = pageHostTop
         NSLayoutConstraint.activate([
-            pageHostView.topAnchor.constraint(equalTo: _tabBar.bottomAnchor),
+            pageHostTop,
             pageHostView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             pageHostView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             pageHostHeight,
@@ -643,8 +824,8 @@ open class SlidePagerViewController: UIViewController {
 
     private func settleCurrentPage(to index: Int, animated: Bool, notify: Bool) {
         guard pages.indices.contains(index) else { return }
-        let changed = index != selectedIndex
-        selectedIndex = index
+        let changed = index != _selectedIndex
+        _selectedIndex = index
         pendingPageOvershoot = nil
         attachObserversIfPossible(for: pages[index])
         if notify, changed {
@@ -786,8 +967,8 @@ open class SlidePagerViewController: UIViewController {
 
     private func updateStickyState(collapse: CGFloat, maxStickyOffset: CGFloat) {
         let state = StickyState.resolve(collapse: collapse, maxStickyOffset: maxStickyOffset)
-        guard state != stickyState else { return }
-        stickyState = state
+        guard state != _stickyState else { return }
+        _stickyState = state
         delegate?.slidePager(self, didChangeStickyState: state)
     }
 }

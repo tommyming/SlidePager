@@ -70,10 +70,10 @@ final class TabButton: UIControl {
 /// The default tab bar: a horizontally scrollable row of titles with a
 /// sliding underline indicator (Twitter/Instagram profile style).
 ///
-/// All styling properties are `public` and can be changed at any time.
-/// Provide any other view conforming to `SlidePagerTabBar` for a fully
-/// custom look.
-public final class UnderlineTabBarView: UIView, SlidePagerTabBar {
+/// All styling properties are `open` and can be changed at any time, including
+/// from another module. Provide any other view conforming to `SlidePagerTabBar`
+/// for a fully custom look.
+open class UnderlineTabBarView: UIView, SlidePagerTabBar {
     /// How tabs share the bar's width.
     public enum Distribution: Equatable {
         /// Tabs size to their titles and pack from the leading edge. Extra tabs scroll.
@@ -81,30 +81,30 @@ public final class UnderlineTabBarView: UIView, SlidePagerTabBar {
         /// Tabs share the bar width equally.
         case fillEqually
     }
-    public var preferredHeight: CGFloat { 46 }
+    open var preferredHeight: CGFloat { 46 }
 
-    public var onSelection: ((Int) -> Void)?
+    open var onSelection: ((Int) -> Void)?
 
     /// The color of the sliding underline.
-    public var underlineColor: UIColor = .systemBlue {
+    open var underlineColor: UIColor = .systemBlue {
         didSet { underlineView.backgroundColor = underlineColor }
     }
 
-    public var titleFont: UIFont = .systemFont(ofSize: 15, weight: .semibold) {
+    open var titleFont: UIFont = .systemFont(ofSize: 15, weight: .semibold) {
         didSet { buttons.forEach { $0.titleFont = titleFont } }
     }
 
-    public var tabTitleColor: UIColor = .secondaryLabel {
+    open var tabTitleColor: UIColor = .secondaryLabel {
         didSet { buttons.forEach { $0.textColor = tabTitleColor } }
     }
 
-    public var selectedTabTitleColor: UIColor = .label {
+    open var selectedTabTitleColor: UIColor = .label {
         didSet { buttons.forEach { $0.selectedTextColor = selectedTabTitleColor } }
     }
 
     /// `.leading` packs title-sized tabs from the leading edge.
     /// `.fillEqually` gives every tab the same width and fills the bar.
-    public var distribution: Distribution = .leading {
+    open var distribution: Distribution = .leading {
         didSet {
             guard distribution != oldValue else { return }
             applyDistribution()
