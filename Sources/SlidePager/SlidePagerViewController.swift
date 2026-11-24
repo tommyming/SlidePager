@@ -131,8 +131,7 @@ open class SlidePagerViewController: UIViewController {
 
     private var pageObservations: [PageScrollObservation] = []
     private var pagingOffsetObservation: NSKeyValueObservation?
-    private var pagingRestingOffsetX: CGFloat?
-    private var lastPagingProgress: CGFloat = 0
+    private var pagingIndicator = PagingIndicatorTracker()
     private var isEnforcingInvariants = false
     private var isRedirectingOverscroll = false
     private var pendingPageOvershoot: CGFloat?
@@ -1040,30 +1039,42 @@ extension SlidePagerViewController {
         let width = scrollView.bounds.width
         guard width > 1 else { return }
         let interacting = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
-        if !interacting {
-            pagingRestingOffsetX = scrollView.contentOffset.x
+        switch pagingIndicator.consume(
+            offsetX: scrollView.contentOffset.x,
+            oldOffsetX: oldOffsetX,
+            width: width,
+            interacting: interacting,
+            fingerDown: scrollView.isTracking || scrollView.isDragging,
+            selectedIndex: selectedIndex,
+            pageCount: pages.count
+        ) {
+        case .resting:
             syncSelectionFromVisiblePage()
-            return
+        case .recentered:
+            // The page controller jumped back to the settled page. Pin the
+            // indicator there — a late progress sample must not leave it on
+            // the following tab.
+            pinIndicatorToVisiblePage()
+        case .follow(let from, let to, let progress):
+            _tabBar.setTransitionProgress(from: from, to: to, progress: progress)
+        case .unchanged:
+            break
         }
-        if pagingRestingOffsetX == nil {
-            pagingRestingOffsetX = oldOffsetX ?? scrollView.contentOffset.x
+    }
+
+    /// Moves the indicator onto the page the page controller is showing.
+    ///
+    /// Called when that controller recenters its scroll view. `selectedIndex`
+    /// may already match, but the indicator can still be on the wrong tab.
+    private func pinIndicatorToVisiblePage() {
+        guard let current = pageViewController.viewControllers?.first,
+              let index = pages.firstIndex(of: current)
+        else { return }
+        if index != _selectedIndex {
+            settleCurrentPage(to: index, animated: false, notify: true)
+        } else {
+            _tabBar.setSelectedIndex(index, animated: false)
         }
-        let resting = pagingRestingOffsetX ?? width
-        let progress = (scrollView.contentOffset.x - resting) / width
-        // The page controller jumps the scroll view back to center when a
-        // swipe completes. That is not the user dragging back — ignore it so
-        // the indicator does not snap to the previous page.
-        if abs(progress) < 0.05, abs(progress - lastPagingProgress) > 0.5 {
-            lastPagingProgress = 0
-            return
-        }
-        lastPagingProgress = progress
-        guard abs(progress) > 0.001 else { return }
-        let from = selectedIndex
-        let forward = progress > 0
-        let to = forward ? min(pages.count - 1, from + 1) : max(0, from - 1)
-        guard to != from else { return }
-        _tabBar.setTransitionProgress(from: from, to: to, progress: min(1, abs(progress)))
     }
 
     private func syncSelectionFromVisiblePage() {

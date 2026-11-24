@@ -1,6 +1,6 @@
 # SlidePager
 
-**Version 1.0.1.** SlidePager is a UIKit container with three parts:
+**Version 1.0.2.** SlidePager is a UIKit container with three parts:
 
 - a header that scrolls out of view
 - a tab bar that stays below the top safe-area inset
@@ -47,7 +47,7 @@ While the header is visible, the outer scroll view scrolls vertically. After the
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.1"),
+    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.2"),
 ],
 targets: [
     .target(
@@ -59,7 +59,7 @@ targets: [
 ]
 ```
 
-`1.0.1` is the git tag. Swift Package Manager does not read a version from `Package.swift`. The tag must exist on the repository before `from:` resolves.
+`1.0.2` is the git tag. Swift Package Manager does not read a version from `Package.swift`. The tag must exist on the repository before `from:` resolves.
 
 ## Quick start
 

@@ -1,5 +1,5 @@
 // swift-tools-version:6.0
-// SlidePager 1.0.1. The package version is the git tag, not a field here.
+// SlidePager 1.0.2. The package version is the git tag, not a field here.
 import PackageDescription
 
 let package = Package(
