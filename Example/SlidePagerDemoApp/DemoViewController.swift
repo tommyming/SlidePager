@@ -8,10 +8,34 @@ import SlidePager
 ///     window?.rootViewController = UINavigationController(rootViewController: DemoViewController())
 ///
 /// or wrap it with `UIViewControllerRepresentable` in a SwiftUI app.
+///
+/// The Configure menu assigns the pager's `open` state from this app, which
+/// lives outside the SlidePager module. The header button still animates the
+/// height through `updateHeaderHeight(_:animated:)`.
 public final class DemoViewController: UIViewController, SlidePagerDelegate {
 
     private var pager: SlidePagerViewController?
     private let stateLabel = UILabel()
+    private let primaryHeader = DemoHeaderView()
+    private let alternateHeader = DemoHeaderView(
+        title: "Replaced header",
+        subtitle: "Assigned through headerView.",
+        background: UIColor.systemTeal.withAlphaComponent(0.22)
+    )
+    private var showingAlternateHeader = false
+    private var usingAlternatePages = false
+    private var tabsRestyled = false
+    private var usingCustomTabBar = false
+    private let primaryPages: [UIViewController] = [
+        DemoListPage(rows: 60, title: "List"),
+        DemoGridPage(itemCount: 120, title: "Grid"),
+        DemoShortPage(title: "Short"),
+        DemoListPage(rows: 12, title: "List 2"),
+    ]
+    private let alternatePages: [UIViewController] = [
+        DemoListPage(rows: 8, title: "Notes"),
+        DemoShortPage(title: "About"),
+    ]
 
     public init() {
         super.init(nibName: nil, bundle: nil)
@@ -26,26 +50,26 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
     public override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            image: UIImage(systemName: "slider.horizontal.3"),
+            menu: UIMenu(title: "Configure", children: [
+                UIDeferredMenuElement.uncached { [weak self] completion in
+                    completion(self?.configureActions() ?? [])
+                },
+            ])
+        )
+        navigationItem.rightBarButtonItem?.accessibilityLabel = "Configure"
 
-        let header = DemoHeaderView()
-        let tabBar = UnderlineTabBarView(titles: ["List", "Grid", "Short", "List 2"])
-
-        let pages: [UIViewController] = [
-            DemoListPage(rows: 60, title: "List"),
-            DemoGridPage(itemCount: 120, title: "Grid"),
-            DemoShortPage(title: "Short"),
-            DemoListPage(rows: 12, title: "List 2"),
-        ]
-
+        let tabBar = UnderlineTabBarView(titles: titles(of: primaryPages))
         let pager = SlidePagerViewController(
-            header: header,
+            header: primaryHeader,
             headerHeight: DemoHeaderView.expandedHeight,
             tabBar: tabBar,
-            pages: pages
+            pages: primaryPages
         )
         pager.delegate = self
-        header.onToggleHeight = { [weak pager] in
-            guard let pager = pager else { return }
+        let toggleHeight = { [weak pager] in
+            guard let pager else { return }
             let midpoint = (DemoHeaderView.collapsedHeight + DemoHeaderView.expandedHeight) / 2
             let grown = pager.currentHeaderHeight > midpoint
             pager.updateHeaderHeight(
@@ -53,6 +77,8 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
                 animated: true
             )
         }
+        primaryHeader.onToggleHeight = toggleHeight
+        alternateHeader.onToggleHeight = toggleHeight
 
         addChild(pager)
         pager.view.translatesAutoresizingMaskIntoConstraints = false
@@ -68,19 +94,162 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
 
         stateLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         stateLabel.textColor = .secondaryLabel
-        stateLabel.text = String(describing: StickyState.expanded)
         stateLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stateLabel)
         NSLayoutConstraint.activate([
             stateLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            stateLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             stateLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
         ])
+        refreshStateLabel()
+    }
+
+    // MARK: - External configuration
+
+    /// Menu actions assign `open` state. They do not call the library's methods
+    /// except where animation is the point of the header button.
+    private func configureActions() -> [UIMenuElement] {
+        guard pager != nil else { return [] }
+        return [
+            UIMenu(title: "Sticky state", children: [
+                stickyAction("Expanded", state: .expanded),
+                stickyAction("Halfway", state: .partiallyCollapsed(progress: 0.5)),
+                stickyAction("Collapsed", state: .collapsed),
+            ]),
+            UIMenu(title: "Select page", children: selectPageActions()),
+            UIAction(title: usingAlternatePages ? "Restore pages" : "Replace pages") { [weak self] _ in
+                self?.togglePages()
+            },
+            UIAction(title: showingAlternateHeader ? "Restore header" : "Replace header") { [weak self] _ in
+                self?.toggleHeader()
+            },
+            UIAction(title: "Set header height") { [weak self] _ in
+                self?.assignHeaderHeight()
+            },
+            UIAction(title: tabsRestyled ? "Restore tab style" : "Restyle tabs") { [weak self] _ in
+                self?.toggleTabStyle()
+            },
+            UIAction(title: usingCustomTabBar ? "Restore tab bar" : "Swap tab bar") { [weak self] _ in
+                self?.toggleTabBar()
+            },
+        ]
+    }
+
+    private func stickyAction(_ title: String, state: StickyState) -> UIAction {
+        UIAction(title: title, state: stickyMatches(state) ? .on : .off) { [weak self] _ in
+            self?.pager?.stickyState = state
+        }
+    }
+
+    private func stickyMatches(_ state: StickyState) -> Bool {
+        guard let current = pager?.stickyState else { return false }
+        switch (current, state) {
+        case (.expanded, .expanded), (.collapsed, .collapsed):
+            return true
+        case (.partiallyCollapsed(let progress), .partiallyCollapsed(let target)):
+            return abs(progress - target) < 0.05
+        default:
+            return false
+        }
+    }
+
+    private func selectPageActions() -> [UIAction] {
+        guard let pager else { return [] }
+        return pager.pages.enumerated().map { index, page in
+            UIAction(
+                title: page.title ?? "Tab \(index + 1)",
+                state: pager.selectedIndex == index ? .on : .off
+            ) { [weak self] _ in
+                self?.pager?.selectedIndex = index
+            }
+        }
+    }
+
+    private func togglePages() {
+        guard let pager else { return }
+        usingAlternatePages.toggle()
+        pager.pages = usingAlternatePages ? alternatePages : primaryPages
+        refreshStateLabel()
+    }
+
+    private func toggleHeader() {
+        guard let pager else { return }
+        showingAlternateHeader.toggle()
+        pager.headerView = showingAlternateHeader ? alternateHeader : primaryHeader
+    }
+
+    private func assignHeaderHeight() {
+        guard let pager else { return }
+        let midpoint = (DemoHeaderView.collapsedHeight + DemoHeaderView.expandedHeight) / 2
+        let grown = pager.currentHeaderHeight > midpoint
+        pager.currentHeaderHeight = grown ? DemoHeaderView.collapsedHeight : DemoHeaderView.expandedHeight
+    }
+
+    private func toggleTabStyle() {
+        tabsRestyled.toggle()
+        applyTabStyle()
+    }
+
+    private func applyTabStyle() {
+        guard let bar = pager?.tabBarView as? UnderlineTabBarView else { return }
+        bar.underlineColor = tabsRestyled ? .systemPink : .systemBlue
+        bar.titleFont = tabsRestyled
+            ? .systemFont(ofSize: 17, weight: .bold)
+            : .systemFont(ofSize: 15, weight: .semibold)
+        bar.tabTitleColor = tabsRestyled ? .systemOrange : .secondaryLabel
+        bar.selectedTabTitleColor = tabsRestyled ? .systemPink : .label
+        bar.distribution = tabsRestyled ? .fillEqually : .leading
+    }
+
+    private func toggleTabBar() {
+        guard let pager else { return }
+        usingCustomTabBar.toggle()
+        let titles = titles(of: pager.pages)
+        let bar: UnderlineTabBarView = usingCustomTabBar
+            ? DemoTabBar(titles: titles)
+            : UnderlineTabBarView(titles: titles)
+        pager.tabBarView = bar
+        applyTabStyle()
+    }
+
+    private func titles(of pages: [UIViewController]) -> [String] {
+        pages.enumerated().map { index, page in
+            page.title ?? "Tab \(index + 1)"
+        }
+    }
+
+    private func refreshStateLabel() {
+        guard let pager else { return }
+        let title = pager.pages.indices.contains(pager.selectedIndex)
+            ? (pager.pages[pager.selectedIndex].title ?? "Tab")
+            : "—"
+        stateLabel.text = "\(title) · \(pager.stickyState)"
     }
 
     // MARK: - SlidePagerDelegate
 
     public func slidePager(_ pager: SlidePagerViewController, didChangeStickyState state: StickyState) {
-        stateLabel.text = String(describing: state)
+        refreshStateLabel()
+    }
+
+    public func slidePager(_ pager: SlidePagerViewController, didTransitionToPageAt index: Int) {
+        refreshStateLabel()
+    }
+}
+
+/// An `open` subclass from the demo app. Its height is reserved by the pager
+/// because `preferredHeight` can be overridden outside the module.
+private final class DemoTabBar: UnderlineTabBarView {
+    override var preferredHeight: CGFloat { 58 }
+
+    override init(titles: [String], distribution: Distribution = .leading) {
+        super.init(titles: titles, distribution: distribution)
+        underlineColor = .systemTeal
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
     }
 }
 
@@ -92,21 +261,27 @@ final class DemoHeaderView: UIView {
 
     var onToggleHeight: (() -> Void)?
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = UIColor.systemIndigo.withAlphaComponent(0.15)
+    init(
+        title: String = "SlidePager",
+        subtitle: String = "Scroll, swipe, tap tabs, or open Configure.",
+        buttonTitle: String = "Toggle header size",
+        background: UIColor = UIColor.systemIndigo.withAlphaComponent(0.15)
+    ) {
+        super.init(frame: .zero)
+        backgroundColor = background
 
         let titleLabel = UILabel()
-        titleLabel.text = "SlidePager"
+        titleLabel.text = title
         titleLabel.font = .systemFont(ofSize: 34, weight: .bold)
 
         let subtitleLabel = UILabel()
-        subtitleLabel.text = "Scroll vertically, swipe horizontally, tap tabs."
+        subtitleLabel.text = subtitle
         subtitleLabel.font = .systemFont(ofSize: 15)
         subtitleLabel.textColor = .secondaryLabel
+        subtitleLabel.numberOfLines = 0
 
         let button = UIButton(type: .system)
-        button.setTitle("Toggle header size", for: .normal)
+        button.setTitle(buttonTitle, for: .normal)
         button.addTarget(self, action: #selector(toggleTapped), for: .touchUpInside)
 
         for subview in [titleLabel, subtitleLabel, button] {
@@ -116,8 +291,10 @@ final class DemoHeaderView: UIView {
         NSLayoutConstraint.activate([
             titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
             subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
+            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -20),
             button.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 12),
             button.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
         ])

@@ -255,7 +255,7 @@ The example app is the shortest path:
 
 > Open **`Example/SlidePagerDemoApp.xcodeproj`** in Xcode and press Cmd+R.
 
-The project builds the local package at `../`. It runs on iPhone and iPad. It shows a list page, a grid page, a short page, and a second list page. The header can change height while the app runs.
+The project builds the local package at `../`. It runs on iPhone and iPad. It shows a list page, a grid page, a short page, and a second list page. The header button animates the header height. The Configure menu assigns the open state from outside the module: sticky state, selected page, pages, header, header height, tab style, and tab bar.
 
 From the CLI:
 
