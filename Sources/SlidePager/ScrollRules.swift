@@ -151,6 +151,21 @@ enum ScrollRules {
         return (max(0, outerStartY - expand), pageTopY)
     }
 
+    /// Header offset when a pull-down first reaches the page top.
+    ///
+    /// The distance already past the top must move the header immediately.
+    /// Dropping it makes the next pull-down hitch for a frame.
+    static func outerOffsetAtPageTopTakeover(
+        fingerDown: CGFloat,
+        pageStartY: CGFloat,
+        pageTopY: CGFloat,
+        maxStickyOffset: CGFloat
+    ) -> CGFloat {
+        let pageCanGive = max(0, pageStartY - pageTopY)
+        let leftover = max(0, fingerDown - pageCanGive)
+        return max(0, maxStickyOffset - leftover)
+    }
+
     /// `true` when the page must be held at its top resting offset because the
     /// header is still (at least partly) visible.
     ///

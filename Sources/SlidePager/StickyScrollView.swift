@@ -79,6 +79,8 @@ final class StickyScrollView: UIScrollView, UIGestureRecognizerDelegate {
 /// Recognizes alongside the page controller's pan. A clearly horizontal
 /// translation cancels it so paging is left alone.
 final class HeaderCollapsePan: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
+    var onTouchDown: (() -> Void)?
+
     override init(target: Any?, action: Selector?) {
         super.init(target: target, action: action)
         delegate = self
@@ -88,6 +90,11 @@ final class HeaderCollapsePan: UIPanGestureRecognizer, UIGestureRecognizerDelega
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onTouchDown?()
+        super.touchesBegan(touches, with: event)
     }
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {

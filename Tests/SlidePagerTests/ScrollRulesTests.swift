@@ -200,4 +200,15 @@ struct ScrollRulesTests {
             fingerDown: -20, outerStartY: 200, pageStartY: 100, pageTopY: 0, maxStickyOffset: 200
         ) == nil)
     }
+
+    @Test func `page-top takeover keeps the leftover pull on the header`() {
+        let outer = ScrollRules.outerOffsetAtPageTopTakeover(
+            fingerDown: 58.3, pageStartY: 51.3, pageTopY: 0, maxStickyOffset: 230
+        )
+        #expect(abs(outer - 223.0) < 0.1)
+        let stillInPage = ScrollRules.outerOffsetAtPageTopTakeover(
+            fingerDown: 20, pageStartY: 51.3, pageTopY: 0, maxStickyOffset: 230
+        )
+        #expect(abs(stillInPage - 230) < 0.01)
+    }
 }

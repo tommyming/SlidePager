@@ -233,6 +233,29 @@ struct SlidePagerViewControllerTests {
         #expect(pagingScrollView.isScrollEnabled)
     }
 
+    @Test func `A vertical paging offset cannot shift the page`() throws {
+        let pager = makePager()
+        load(pager)
+        let paging = try #require(
+            scrollViews(in: pager.view).first {
+                $0 !== pager.outerScrollView && !($0 is UITableView) && $0.bounds.height > 100
+            }
+        )
+        let page = pager.pages[0]
+        let before = page.view.convert(page.view.bounds, to: pager.view).minY
+        paging.setContentOffset(CGPoint(x: paging.contentOffset.x, y: 18), animated: false)
+        #expect(abs(paging.contentOffset.y) < 1)
+        let after = page.view.convert(page.view.bounds, to: pager.view).minY
+        #expect(abs(after - before) < 1)
+    }
+
+    @Test func `A coordinated page scroll view does not delay the second drag`() {
+        let pager = makePager()
+        load(pager)
+        let page = pager.pages[0] as! TestListPage
+        #expect(!page.tableView.delaysContentTouches)
+    }
+
     @Test func `Outer pan recognizes simultaneously with the page pan`() {
         let pager = makePager()
         load(pager)
@@ -396,6 +419,14 @@ struct SlidePagerViewControllerTests {
 
         #expect(pager.currentHeaderHeight == 0)
         #expect(pager.stickyState == .collapsed)
+    }
+
+    @Test func `Touching the collapse pan fires touch-down before pan begins`() throws {
+        let pan = HeaderCollapsePan()
+        var touched = false
+        pan.onTouchDown = { touched = true }
+        pan.touchesBegan([], with: UIEvent())
+        #expect(touched)
     }
 
     // MARK: - Traversal helpers

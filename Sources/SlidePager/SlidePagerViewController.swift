@@ -132,6 +132,7 @@ open class SlidePagerViewController: UIViewController {
     private var pageObservations: [PageScrollObservation] = []
     private var pagingOffsetObservation: NSKeyValueObservation?
     private var pagingIndicator = PagingIndicatorTracker()
+    private var isClampingPagingOffset = false
     private var isEnforcingInvariants = false
     private var isRedirectingOverscroll = false
     private var pendingPageOvershoot: CGFloat?
@@ -515,6 +516,10 @@ open class SlidePagerViewController: UIViewController {
         pager.dataSource = self
         pager.delegate = self
         collapsePan.addTarget(self, action: #selector(collapsePanChanged(_:)))
+        (collapsePan as? HeaderCollapsePan)?.onTouchDown = { [weak self] in
+            guard let self, self.isCoasting else { return }
+            self.stopCoast()
+        }
         pageHostView.addGestureRecognizer(collapsePan)
         installPanCoordination()
     }
@@ -527,6 +532,11 @@ open class SlidePagerViewController: UIViewController {
         switch pan.state {
         case .began:
             stopCoast(endingPan: false)
+            // The previous gesture may have suspended bouncing and marked a
+            // handoff. This gesture starts clean; it sets those again only if
+            // it actually drives the header.
+            restorePageBounces()
+            handoffDidDrive = false
             // Translation is read in this view, not the page host. The page
             // host moves as the header collapses, so a translation in that
             // view stays near zero and the header never moves.
@@ -586,16 +596,23 @@ open class SlidePagerViewController: UIViewController {
         let startedScrolled = origin.pageY > top + ScrollRules.epsilon
         guard startedCollapsed, startedScrolled else { return false }
         guard page.contentOffset.y <= top + ScrollRules.epsilon else { return false }
-        let fingerDown = collapsePan.translation(in: view).y - origin.translationY
+        let currentTranslation = collapsePan.translation(in: view).y
+        let fingerDown = currentTranslation - origin.translationY
         guard fingerDown > ScrollRules.epsilon else { return false }
-        // Restart the translation here so the header picks up with no jump
-        // and no rubber-band pause.
+        // The page has already consumed the drag up to its top. Keep the
+        // distance past that top, or the header waits a frame and the scroll
+        // hitches on the next pull-down.
         handoffDriving = true
         handoffDidDrive = true
         collapsePanOrigin = (
-            outerY: maxStickyOffset,
+            outerY: ScrollRules.outerOffsetAtPageTopTakeover(
+                fingerDown: fingerDown,
+                pageStartY: origin.pageY,
+                pageTopY: top,
+                maxStickyOffset: maxStickyOffset
+            ),
             pageY: top,
-            translationY: collapsePan.translation(in: view).y
+            translationY: currentTranslation
         )
         suspendPageBounces()
         applyLinkedOffsets()
@@ -609,14 +626,18 @@ open class SlidePagerViewController: UIViewController {
     }
 
     private func endCollapsePan() {
-        if let suspended = suspendedPageBounces {
-            suspended.scrollView.bounces = suspended.bounces
-            suspendedPageBounces = nil
-        }
+        restorePageBounces()
         handoffDriving = false
         isCoasting = false
         coastExtraFingerDown = 0
         collapsePanOrigin = nil
+    }
+
+    private func restorePageBounces() {
+        if let suspended = suspendedPageBounces {
+            suspended.scrollView.bounces = suspended.bounces
+            suspendedPageBounces = nil
+        }
     }
 
     /// Continues a header drag after the finger lifts, with the same decay
@@ -635,6 +656,13 @@ open class SlidePagerViewController: UIViewController {
         coastStartTime = CACurrentMediaTime()
         lastCoastOuterY = outerScrollView.contentOffset.y
         lastCoastPageY = currentPageScrollView?.contentOffset.y ?? 0
+        // Snapshot the settled start point so a new touch resetting the pan's
+        // translation cannot jerk the header or page backwards mid-coast.
+        collapsePanOrigin = (
+            outerY: lastCoastOuterY,
+            pageY: lastCoastPageY,
+            translationY: 0
+        )
         let link = CADisplayLink(target: coastBox, selector: #selector(CoastBox.tick(_:)))
         link.add(to: .main, forMode: .common)
         coastLink = link
@@ -709,7 +737,8 @@ open class SlidePagerViewController: UIViewController {
         isApplyingHandoff = true
         defer { isApplyingHandoff = false }
         let top = currentPageScrollView.map { topRestingOffset(of: $0) } ?? 0
-        let fingerDown = collapsePan.translation(in: view).y - origin.translationY + coastExtraFingerDown
+        let panDown = isCoasting ? 0 : (collapsePan.translation(in: view).y - origin.translationY)
+        let fingerDown = panDown + coastExtraFingerDown
         var linked = ScrollRules.linkedOffsets(
             fingerDown: fingerDown,
             outerStartY: origin.outerY,
@@ -861,6 +890,10 @@ open class SlidePagerViewController: UIViewController {
             }
         }
         pageObservations.append(PageScrollObservation(scrollView: scrollView, observation: observation))
+        // The first vertical drag is driven by the outer scroll view, which does
+        // not delay touches. A later drag is this scroll view's own pan. Leaving
+        // the delay on makes the content jump to the finger when the pan begins.
+        scrollView.delaysContentTouches = false
         installPagePanRelay(on: scrollView)
     }
 
@@ -1036,6 +1069,17 @@ extension SlidePagerViewController {
     /// settles the selection when that scroll view comes to rest. Relying only
     /// on `didFinishAnimating` leaves the indicator on the previous page.
     private func pagingScrollViewDidScroll(_ scrollView: UIScrollView, oldOffsetX: CGFloat?) {
+        if isClampingPagingOffset { return }
+        // The page controller's scroll view is horizontal. A vertical component
+        // moves the whole page — the grid jumps up — before the page scroll view
+        // continues the drag. Keep that axis pinned.
+        if abs(scrollView.contentOffset.y) > ScrollRules.epsilon {
+            isClampingPagingOffset = true
+            var offset = scrollView.contentOffset
+            offset.y = 0
+            scrollView.contentOffset = offset
+            isClampingPagingOffset = false
+        }
         let width = scrollView.bounds.width
         guard width > 1 else { return }
         let interacting = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
@@ -1095,6 +1139,11 @@ extension SlidePagerViewController: UIScrollViewDelegate {
     public func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === outerScrollView else { return }
         stopCoast()
+        // A handoff from an earlier gesture must not cancel this one's
+        // deceleration. Keep the flag when this same gesture is already driving.
+        if collapsePan.state != .began && collapsePan.state != .changed {
+            handoffDidDrive = false
+        }
     }
 
     public func scrollViewDidScroll(_ scrollView: UIScrollView) {
