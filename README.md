@@ -1,6 +1,6 @@
 # SlidePager
 
-**Version 1.0.3.** SlidePager is a UIKit sticky-header container with three coordinated parts:
+**Version 1.1.0.** SlidePager is a UIKit sticky-header container with three coordinated parts:
 
 - a header that scrolls out of view
 - a tab bar that pins below the top safe-area inset
@@ -47,7 +47,7 @@ While the header is visible, vertical drags scroll the outer container. Once the
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.3"),
+    .package(url: "https://github.com/tommyming/SlidePager", from: "1.1.0"),
 ],
 targets: [
     .target(
@@ -59,7 +59,7 @@ targets: [
 ]
 ```
 
-> Swift Package Manager resolves `from:` against git tags (not a field in `Package.swift`), so `1.0.3` refers to the git tag on the repository.
+> Swift Package Manager resolves `from:` against git tags (not a field in `Package.swift`), so `1.1.0` refers to the git tag on the repository.
 
 ## Quick start
 
