@@ -1,22 +1,22 @@
 # SlidePager
 
-**Version 1.0.2.** SlidePager is a UIKit container with three parts:
+**Version 1.0.3.** SlidePager is a UIKit sticky-header container with three coordinated parts:
 
 - a header that scrolls out of view
-- a tab bar that stays below the top safe-area inset
-- pages that swipe left and right
+- a tab bar that pins below the top safe-area inset
+- pages that swipe horizontally inside a `UIPageViewController`
 
 ```
 ┌──────────────────────────┐
 │  Header (collapses)      │   scrolls fully out of view
-│  Tab bar (sticky)        │   stays below the top safe-area inset
+│  Tab bar (sticky)        │   pins below the top safe-area inset
 │  Page 1 | Page 2 | …     │   UIPageViewController, horizontal swipe
 └──────────────────────────┘
 ```
 
-One vertical `UIScrollView` holds the header, the tab bar, and the pages. A `UIPageViewController` (scroll style) shows the pages under the tab bar.
+A single vertical `UIScrollView` holds the header, tab bar, and pages, while a scroll-style `UIPageViewController` hosts the pages beneath the tab bar.
 
-While the header is visible, the outer scroll view scrolls vertically. After the tab bar reaches its stop, the current page scroll view scrolls vertically. A horizontal swipe still changes the page. The two gestures do not fight.
+While the header is visible, vertical drags scroll the outer container. Once the tab bar reaches its sticky stop, vertical drags scroll the current page. Horizontal swipes stay dedicated to paging, so vertical scrolling and page switching never fight each other.
 
 - [Requirements](#requirements)
 - [Installation](#installation)
@@ -41,13 +41,13 @@ While the header is visible, the outer scroll view scrolls vertically. After the
 
 ## Installation
 
-**Xcode:** File → Add Package Dependencies… → `https://github.com/tommyming/SlidePager`.
+**Xcode:** File → Add Package Dependencies… → `https://github.com/tommyming/SlidePager`
 
 **Package.swift:**
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.2"),
+    .package(url: "https://github.com/tommyming/SlidePager", from: "1.0.3"),
 ],
 targets: [
     .target(
@@ -59,14 +59,14 @@ targets: [
 ]
 ```
 
-`1.0.2` is the git tag. Swift Package Manager does not read a version from `Package.swift`. The tag must exist on the repository before `from:` resolves.
+> Swift Package Manager resolves `from:` against git tags (not a field in `Package.swift`), so `1.0.3` refers to the git tag on the repository.
 
 ## Quick start
 
 ```swift
 import SlidePager
 
-let header = ProfileHeaderView()                       // any UIView
+let header = ProfileHeaderView() // any UIView
 let tabBar = UnderlineTabBarView(titles: ["Posts", "Replies", "Media"])
 
 let posts = PostsPage()
@@ -76,23 +76,21 @@ replies.title = "Replies"
 let media = MediaPage()
 media.title = "Media"
 
-let pages: [UIViewController] = [posts, replies, media]
-
 let pager = SlidePagerViewController(
     header: header,
     headerHeight: 220,
     tabBar: tabBar,
-    pages: pages
+    pages: [posts, replies, media]
 )
 pager.delegate = self
 
-// Host it like any view controller, e.g.:
+// Host it like any UIViewController:
 navigationController?.pushViewController(pager, animated: true)
 ```
 
-`SlidePagerViewController` is an `open` class. Its state properties are `open`, so another module can assign them and a subclass can override them. See [Configuring state](#configuring-state).
+`SlidePagerViewController` and its state properties are `open`, so external modules can assign them directly and subclasses can override them. See [Configuring state](#configuring-state).
 
-A page that joins the nested scroll returns its main scroll view:
+Pages with scrollable content (`UITableView`, `UICollectionView`, or `UIScrollView`) conform to `SlidePagerPage` and return their scroll view:
 
 ```swift
 final class PostsPage: UIViewController, SlidePagerPage {
@@ -103,53 +101,50 @@ final class PostsPage: UIViewController, SlidePagerPage {
 }
 ```
 
-The container does not replace a page scroll view's delegate. It does not replace content insets. It reads `contentOffset`. When the page must not scroll, the container writes that offset back. It also decides which pan may move, so a vertical drag on the page collapses the header first.
+SlidePager never replaces a page scroll view's `delegate` or content insets. Instead, it observes `contentOffset`, coordinates pan ownership so vertical drags on a page collapse the header first, and writes back blocked offsets when the page must stay pinned. It also disables `delaysContentTouches` on coordinated scroll views for immediate response, and temporarily suspends page `bounces` during a cross-boundary handoff before restoring it when the gesture ends.
 
-During that transfer, the container sets the page `bounces` to `false`. When the gesture ends, it restores the previous value.
+Pages without scrollable content can omit `SlidePagerPage`; vertical drags anywhere on those pages still collapse and expand the header.
 
-A page with no scroll view can omit `SlidePagerPage`. The header still collapses from any point on that page.
-
-Each page `title` becomes a tab title. When the pager loads, it calls `reloadTabs(titles:)` with those titles. A nil `title` becomes `Tab 1`, `Tab 2`, and so on. That call replaces the titles you passed to `UnderlineTabBarView`.
+Each page's `title` populates the tab bar. When the pager loads (or when `pages` or `tabBarView` are updated), it calls `reloadTabs(titles:)` with those titles, falling back to `"Tab 1"`, `"Tab 2"`, and so on for any `nil` title. That call replaces any initial titles passed to `UnderlineTabBarView`.
 
 ## Behavior contract
 
 | Aspect | Behavior |
 |---|---|
-| Sticky threshold | The header scrolls fully out of view. The tab bar then stops just below the top safe-area inset, including under a translucent navigation bar. |
-| Bounce | The outer scroll view and each page use normal rubber-banding. |
-| Short pages | The header can still collapse when the current page cannot scroll. |
-| Page positions | Each page stays in memory. Each page keeps its own scroll offset when you change tabs. |
-| Header vs. horizontal paging | A page swipe does not move or reset the header. The pager sets the incoming page to the current collapse amount, so the screen does not jump. |
-| Release behavior | A partly collapsed header stays where you release it. It does not snap. |
-| Safe area | The component fills the screen. It places the header below the top safe-area inset (navigation bar or status bar) and stops the tabs below that inset. It updates this layout when the safe area changes. |
+| Sticky threshold | The header scrolls completely out of view, and the tab bar pins just below the top safe-area inset (including under translucent navigation bars). |
+| Bounce | Both the outer scroll view and each page preserve standard rubber-band bouncing. |
+| Short pages | The header still collapses and expands even when the current page cannot scroll. |
+| Page positions | All pages remain mounted in memory and retain their individual scroll offsets across tab switches. |
+| Header vs. horizontal paging | Switching pages never moves or resets the header; incoming pages stay synced to the current collapse state so nothing jumps. |
+| Release behavior | A partially collapsed header rests wherever you release it without snapping. |
+| Safe area | The container fills its bounds, places the header below the top safe-area inset, pins the tabs to that inset when collapsed, and updates automatically when safe-area insets change. |
 
-Vertical gesture rules (which view may scroll):
+Vertical gesture ownership rules:
 
-| Situation | View that may scroll vertically |
+| Situation | View that scrolls vertically |
 |---|---|
-| Header is at least partly visible | Outer scroll view. The page stays at its top. |
-| The tab bar is at its stop, and the page has content below | Page scroll view. The outer scroll view stays at the sticky offset. |
-| The tab bar is at its stop, you pull down, and the page reaches its top | Outer scroll view. It expands the header. |
-| The tab bar is at its stop, and the page cannot scroll | Outer scroll view, including its normal bounce. |
-| Any horizontal swipe | `UIPageViewController` only. The outer scroll view ignores a pan that is mostly horizontal. |
+| Header is at least partly visible | Outer scroll view (the page stays at its top resting offset). |
+| Tab bar is pinned and the page has scrolled or has room to scroll | Page scroll view (the outer scroll view stays at the sticky offset). |
+| Tab bar is pinned, you pull down, and the page reaches its top | Outer scroll view (continues seamlessly to expand the header). |
+| Tab bar is pinned and the page cannot scroll | Outer scroll view, including its normal vertical bounce. |
+| Mostly horizontal swipe | `UIPageViewController` only (the outer scroll view ignores predominantly horizontal pans). |
 
 ## How the scroll coordination works
 
-The container uses two ideas at the same time: both pans can recognize, and only one view may scroll.
+SlidePager combines simultaneous pan recognition with explicit single-owner offset rules:
 
-1. The outer scroll view is a `UIScrollView` subclass. It recognizes a pan at the same time as any other scroll view pan. That includes page table views, page collection views, and the scroll view inside `UIPageViewController`. The container blocks the page controller pan from claiming a vertical drag. A collapse pan on the page area moves the header when that pager would otherwise claim the gesture.
-2. Both scroll views follow the finger. `ScrollRules` then keeps two rules whenever either `contentOffset` changes:
-   - When the header is visible, the page stays at its top resting offset.
-   - When the page is past its top, the outer scroll view stays at the sticky offset.
-3. The container writes the blocked offset back on each frame. The transfer happens during the drag. When the outer scroll view reaches the sticky offset, the page may scroll. When the page reaches its top, the outer scroll view may scroll.
-4. A mostly horizontal pan does not start the outer scroll view. That swipe belongs only to the page view controller.
-5. A collapse gesture can move past the sticky offset. The container then gives the remaining distance to the current page. Scrolling does not stop when the tab bar reaches its stop.
+1. **Simultaneous recognition and pan policies.** The outer scroll view (`StickyScrollView`) recognizes pans alongside page scroll views and `UIPageViewController`'s internal scroll view. Vertical drags on the paging scroll view are yielded via a `gestureRecognizerShouldBegin` policy and clamped to `contentOffset.y = 0`, while a dedicated `HeaderCollapsePan` on the page area drives the header when the page controller would otherwise capture the touch.
+2. **Offset invariants (`ScrollRules`).** Whenever either scroll view moves, pure rules enforce two invariants:
+   - While the header is visible, the page remains at its top resting offset (`-adjustedContentInset.top`).
+   - While the page is scrolled past its top, the outer scroll view remains pinned at the sticky offset.
+3. **Seamless handoffs and coasting.** When a collapse gesture crosses the sticky threshold, leftover travel and flick momentum carry straight into the page (and back into the header on a downward pull or flick). Touching down during deceleration stops coasting cleanly in place without resetting offsets.
+4. **Horizontal isolation.** Predominantly horizontal pans are ignored by the outer scroll view and handled exclusively by `UIPageViewController`.
 
-`ScrollRules` is a set of pure functions. The unit tests cover those functions without UIKit gestures.
+`ScrollRules` is implemented as pure functions covered directly by unit tests without UIKit gestures.
 
 ## Custom tab bars
 
-Use any view that conforms to `SlidePagerTabBar`:
+Provide any `UIView` conforming to `SlidePagerTabBar`:
 
 ```swift
 @MainActor
@@ -162,46 +157,44 @@ public protocol SlidePagerTabBar: AnyObject {
 }
 ```
 
-- `preferredHeight` is the vertical space the container reserves.
-- Call `onSelection` when the user taps a tab.
-- The container calls `setSelectedIndex` after a swipe or a programmatic change. Your tab bar stays in sync.
-- `setTransitionProgress` runs while the user swipes between pages. `progress` is `0` at `from` and `1` at `to`. The default does nothing. A custom tab bar can omit it and update only in `setSelectedIndex`.
+- `preferredHeight` specifies the height reserved for the tab bar.
+- Invoke `onSelection` when the user taps a tab.
+- `setSelectedIndex(_:animated:)` is called after a swipe settles or a programmatic selection.
+- `setTransitionProgress(from:to:progress:)` updates continuously during interactive page swipes, where `progress` moves from `0` (`from`) to `1` (`to`). A default no-op implementation is provided if you only need discrete selection updates.
 
-`UnderlineTabBarView` is an `open` class. It shows a sliding underline, in the same style as Twitter and Instagram profile tabs. Set or override `underlineColor`, `titleFont`, `tabTitleColor`, `selectedTabTitleColor`, and `distribution` at any time. `preferredHeight` is get-only. Override it in a subclass to reserve a different height. There is no setter.
+The built-in `UnderlineTabBarView` is an `open` class styled after Twitter/Instagram profile tabs. You can configure or override `underlineColor`, `titleFont`, `tabTitleColor`, `selectedTabTitleColor`, and `distribution` at any time, and override `preferredHeight` (get-only, `46` by default) in a subclass.
 
-`.leading` is the default. Tabs use the width of their titles, start at the leading edge, and scroll when they do not fit. `.fillEqually` gives every tab the same width. The underline sits under the selected tab on the first layout. It moves with the page during a swipe.
+`distribution` defaults to `.leading` (title-sized tabs packed from the leading edge, scrolling horizontally when needed); `.fillEqually` distributes tabs evenly across the bar width. The underline indicator aligns under the selected tab on initial layout and tracks interactive page swipes.
 
 ## Headers: fixed and dynamic heights
 
-Pass a height, or pass `nil`. `nil` uses the header Auto Layout fitting size:
+Pass an explicit `headerHeight`, or pass `nil` to size the header from its Auto Layout fitting size:
 
 ```swift
 SlidePagerViewController(header: header, headerHeight: nil, tabBar: tabBar, pages: pages)
 ```
 
-You can change the height later. A profile header that grows is one example:
+Update the header height at any time—for example, when expanding profile details:
 
 ```swift
 pager.updateHeaderHeight(320, animated: true)
 ```
 
-Assign `headerView` to replace the header. Pass `nil` to remove it. Assign `currentHeaderHeight` to set an explicit height without animation. That is the same as `updateHeaderHeight(_:animated:)` with `animated: false`.
-
-A fully collapsed header stays fully collapsed. In every other state, the pager keeps the current collapse distance. It clamps that distance to the new range.
+You can also assign `headerView` to swap or remove (`nil`) the header, or assign `currentHeaderHeight` for an un-animated height update (equivalent to `updateHeaderHeight(_:animated: false)`). When the height changes, a fully collapsed header stays collapsed; otherwise, the current collapse offset is preserved and clamped to the new range.
 
 ## Configuring state
 
-The public state is `open`. Assignment from another module configures the pager. It is not a raw stored write. Call through to `super` when you override a property, or the pager does not apply the change.
+All configuration properties on `SlidePagerViewController` are `open`. Assigning them from outside the module updates the UI and scroll state immediately. If you override any of them in a subclass, call `super` so the pager applies the change.
 
-| Property | What assignment does |
+| Property | Behavior on assignment |
 |---|---|
-| `pages` | Replaces the pages and reloads tab titles from each page `title`. The array must not be empty. The current index is kept when it is still valid, and clamped otherwise. |
-| `selectedIndex` | Selects that page without animation. Same as `selectPage(at:animated:)` with `animated: false`. An index outside `pages` is ignored. |
-| `stickyState` | Scrolls the header to that collapse. `.expanded` opens it. `.collapsed` pins the tab bar. `.partiallyCollapsed` stops in between. |
-| `delegate` | Sets the observer for tab, page, and sticky events. |
-| `headerView` | Installs a new header above the tab bar. `nil` removes it. |
-| `tabBarView` | Installs a new tab bar, reloads titles from `pages`, and keeps the current selection. |
-| `currentHeaderHeight` | Sets an explicit height without animation. Same as `updateHeaderHeight(_:animated:)` with `animated: false`. A fully collapsed header stays collapsed. |
+| `pages` | Replaces the child pages (must be non-empty) and reloads tab titles from each page's `title`. Preserves `selectedIndex` if still in bounds, or clamps it. |
+| `selectedIndex` | Switches to that page without animation (same as `selectPage(at:animated: false)`). Out-of-range indices are ignored. |
+| `stickyState` | Scrolls the header to `.expanded`, `.collapsed`, or `.partiallyCollapsed(progress:)`. Assignments before load are applied on first layout. |
+| `delegate` | Sets the `SlidePagerDelegate` observer. |
+| `headerView` | Installs a new header view above the tab bar, or removes it when set to `nil`. |
+| `tabBarView` | Replaces the tab bar view, reloads titles from `pages`, and preserves the current selection. |
+| `currentHeaderHeight` | Sets an explicit height without animation (same as `updateHeaderHeight(_:animated: false)`). |
 
 ```swift
 pager.pages = [posts, media]
@@ -212,7 +205,7 @@ pager.headerView = ProfileHeaderView()
 pager.tabBarView = UnderlineTabBarView(titles: ["Posts", "Media"])
 ```
 
-A subclass in another module can override any of those properties:
+Subclass override example:
 
 ```swift
 final class LoggingPager: SlidePagerViewController {
@@ -223,78 +216,74 @@ final class LoggingPager: SlidePagerViewController {
 }
 ```
 
-`StickyState` is an enum, so `progress` stays `public`. Protocols stay `public` too. Swift only allows `open` on classes and overridable class members.
+(`StickyState` is a `public` enum and the protocols are `public`, as Swift restricts `open` to classes and overridable class members.)
 
 ## Observing state
 
 ```swift
 func slidePager(_ pager: SlidePagerViewController, didSelectTabAt index: Int) {
-    // The user tapped a tab.
+    // User tapped a tab.
 }
 
 func slidePager(_ pager: SlidePagerViewController, didTransitionToPageAt index: Int) {
-    // A transition (swipe, tab tap, or selectPage(at:animated:)) settled.
+    // A page transition (swipe, tab tap, or selectPage(at:animated:)) settled.
 }
 
 func slidePager(_ pager: SlidePagerViewController, didChangeStickyState state: StickyState) {
     switch state {
     case .expanded: …
-    case .partiallyCollapsed(let progress): … // 0…1, great for parallax
+    case .partiallyCollapsed(let progress): … // 0…1, useful for parallax effects
     case .collapsed: …
     }
 }
 ```
 
-All three methods are optional. `SlidePagerDelegate` is `@MainActor`. `didChangeStickyState` fires continuously while the header collapses or expands.
+All three `SlidePagerDelegate` methods are optional (with default no-op implementations) and are delivered on `@MainActor`. `didChangeStickyState` fires continuously as the header collapses or expands.
 
-You can also call `selectPage(at:animated:)` and read `selectedIndex`, `stickyState`, and `currentHeaderHeight`. To change that state from outside the module, assign the properties described in [Configuring state](#configuring-state).
+You can also switch pages programmatically with `selectPage(at:animated:)` and read `selectedIndex`, `stickyState`, and `currentHeaderHeight` at any time.
 
 ## Running the demo
 
-The example app is the shortest path:
+Open **`Example/SlidePagerDemoApp.xcodeproj`** in Xcode and press **Cmd+R**.
 
-> Open **`Example/SlidePagerDemoApp.xcodeproj`** in Xcode and press Cmd+R.
+The demo app builds against the local package at `../`, supports iPhone and iPad, and includes a list page, a grid (`UICollectionView`) page, a non-scrolling short page, and a second list page. The header button toggles animated height updates, and the **Configure** menu exercises all `open` state properties from outside the `SlidePager` module.
 
-The project builds the local package at `../`. It runs on iPhone and iPad. It shows a list page, a grid page, a short page, and a second list page. The header button animates the header height. The Configure menu assigns the open state from outside the module: sticky state, selected page, pages, header, header height, tab style, and tab bar.
-
-From the CLI:
+From the command line (pick an installed simulator from `xcrun simctl list devices available`):
 
 ```sh
 xcodebuild -project Example/SlidePagerDemoApp.xcodeproj \
     -scheme SlidePagerDemoApp \
-    -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.0' \
+    -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
     build
 ```
 
-A destination with only `name` means `OS=latest`. Pass `OS=`, or use a simulator that is on the newest runtime. List simulators with `xcrun simctl list devices available`.
+> Tip: Passing a destination with only `name=` targets `OS=latest`, so include `OS=` if you are targeting a specific runtime.
 
 ## Running the tests
 
-UIKit needs an iOS destination. Plain `swift test` on macOS cannot link UIKit.
+Because SlidePager depends on UIKit, run tests against an iOS Simulator destination rather than plain `swift test` on macOS:
 
 ```sh
 xcodebuild test \
     -scheme SlidePager \
-    -destination 'platform=iOS Simulator,name=iPhone 18 Pro,OS=27.0'
+    -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5'
 ```
 
-The destination rule is the same as the demo. A bare `name` means `OS=latest`.
-
-`SlidePager` is the scheme Swift Package Manager generates for this package. It builds the library and runs the test target.
+`SlidePager` is the scheme generated by Swift Package Manager for the package.
 
 ## Resizability
 
-The component uses the size of the current scene:
+SlidePager adapts to dynamic container sizes and environments:
 
-- It does not use `UIScreen.main`, `interfaceOrientation`, or `userInterfaceIdiom`. Geometry comes from the container bounds, the trait collection, and the safe-area insets.
-- Rotation, split screen, Stage Manager, and a foldable size change run the sticky layout again. The methods are `viewDidLayoutSubviews` and `viewSafeAreaInsetsDidChange`. The current collapse state stays the same.
-- The top inset can differ from the other insets, and it can change while the app runs. Tabs stop below the current top inset. The header lays out again when that inset changes.
+- Avoids `UIScreen.main`, `interfaceOrientation`, and `userInterfaceIdiom`; all geometry is derived from container bounds, trait collections, and safe-area insets.
+- Rotation, Split View, Stage Manager, and foldable size changes re-run sticky geometry in `viewDidLayoutSubviews` and `viewSafeAreaInsetsDidChange` while preserving the current collapse state.
+- Dynamic top safe-area inset changes update tab pinning and header layout automatically.
 
 ## Known trade-offs
 
-- **A header flick continues after you lift your finger.** Deceleration is the normal scroll deceleration, in both directions. A flick that returns a scrolled page to its top continues into the header.
-- **A horizontal swipe on the header does not change the page.** The page view controller gesture starts below the tab bar.
-- Each page stays in memory so its scroll position stays. A very heavy page uses that memory the whole time.
+- **Coasting continues across boundaries.** Flick deceleration uses normal scroll deceleration in both directions; a downward flick that reaches the top of a scrolled page continues into expanding the header.
+- **Horizontal swipes start below the tab bar.** Swiping horizontally on the header itself does not change pages because `UIPageViewController`'s gesture lives below the tab bar.
+- **Mounted pages stay in memory.** Each child view controller stays alive to preserve its scroll offset, so particularly heavy pages retain their memory footprint across tab switches.
 
 ## License
 
