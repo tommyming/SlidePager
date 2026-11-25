@@ -169,6 +169,25 @@ open class SlidePagerViewController: UIViewController {
 
     // MARK: - Init
 
+    /// Creates an empty pager with no header and the default
+    /// `UnderlineTabBarView`.
+    ///
+    /// Configure `pages` (and optionally `headerView`, `tabBarView`,
+    /// `currentHeaderHeight`, and `delegate`) before or after the view loads.
+    /// Subclasses can call `super.init()` without providing initial pages or a
+    /// custom tab bar up front.
+    public init() {
+        self._headerView = nil
+        self.explicitHeaderHeight = nil
+        self._tabBar = UnderlineTabBarView(titles: [])
+        self._pages = []
+        self.pageViewController = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        super.init(nibName: nil, bundle: nil)
+    }
+
     /// Creates a pager.
     ///
     /// - Parameters:
@@ -242,11 +261,13 @@ open class SlidePagerViewController: UIViewController {
             return atTop && pullingDown
         }
 
-        let initialIndex = pages.indices.contains(selectedIndex) ? selectedIndex : 0
-        let first = pages[initialIndex]
-        pageViewController.setViewControllers([first], direction: .forward, animated: false)
-        attachObserversIfPossible(for: first)
-        settleCurrentPage(to: initialIndex, animated: false, notify: false)
+        if !pages.isEmpty {
+            let initialIndex = pages.indices.contains(selectedIndex) ? selectedIndex : 0
+            let first = pages[initialIndex]
+            pageViewController.setViewControllers([first], direction: .forward, animated: false)
+            attachObserversIfPossible(for: first)
+            settleCurrentPage(to: initialIndex, animated: false, notify: false)
+        }
     }
 
     open override func viewDidLayoutSubviews() {
@@ -281,7 +302,7 @@ open class SlidePagerViewController: UIViewController {
     /// current collapse amount is preserved (clamped to the new range).
     public func updateHeaderHeight(_ height: CGFloat?, animated: Bool) {
         explicitHeaderHeight = height
-        guard isViewLoaded, view.bounds.width > 0 else { return }
+        guard isViewLoaded, pageHostView.superview != nil, view.bounds.width > 0 else { return }
         if animated {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
                 self.applyStickyGeometry(preservingCollapse: true)
@@ -302,7 +323,7 @@ open class SlidePagerViewController: UIViewController {
         if pagesAreIdentical(_pages, newPages) { return }
         _pages = newPages
         let index = pages.indices.contains(_selectedIndex) ? _selectedIndex : newPages.count - 1
-        guard isViewLoaded else {
+        guard isViewLoaded, pageHostView.superview != nil else {
             _selectedIndex = index
             return
         }
@@ -315,13 +336,15 @@ open class SlidePagerViewController: UIViewController {
         settleCurrentPage(to: index, animated: false, notify: indexChanged)
         if !indexChanged, displayed !== page {
             _tabBar.setSelectedIndex(index, animated: false)
-            delegate?.slidePager(self, didTransitionToPageAt: index)
+            if displayed != nil {
+                delegate?.slidePager(self, didTransitionToPageAt: index)
+            }
         }
     }
 
     private func configureSelectedIndex(_ index: Int) {
         guard pages.indices.contains(index) else { return }
-        guard isViewLoaded else {
+        guard isViewLoaded, pageHostView.superview != nil else {
             _selectedIndex = index
             return
         }
@@ -329,7 +352,7 @@ open class SlidePagerViewController: UIViewController {
     }
 
     private func configureStickyState(_ state: StickyState) {
-        let geometryReady = isViewLoaded && view.bounds.width > 0
+        let geometryReady = isViewLoaded && pageHostView.superview != nil && view.bounds.width > 0
         guard geometryReady else {
             let changed = _stickyState != state
             _stickyState = state
@@ -378,7 +401,7 @@ open class SlidePagerViewController: UIViewController {
     private func setTabBarView(_ tabBar: SlidePagerTabBarView) {
         guard _tabBar !== tabBar else { return }
         _tabBar = tabBar
-        guard isViewLoaded else { return }
+        guard isViewLoaded, pageHostView.superview != nil else { return }
         installTabBar(tabBar)
         applyStickyGeometry(preservingCollapse: true)
         enforceScrollInvariants()
@@ -482,7 +505,9 @@ open class SlidePagerViewController: UIViewController {
         }
         tabBar.reloadTabs(titles: tabTitles(for: pages))
         guard pageHostView.superview != nil else { return }
-        tabBar.setSelectedIndex(selectedIndex, animated: false)
+        if pages.indices.contains(selectedIndex) {
+            tabBar.setSelectedIndex(selectedIndex, animated: false)
+        }
         pageHostTop?.isActive = false
         pageHostTop = pageHostView.topAnchor.constraint(equalTo: tabBar.bottomAnchor)
         pageHostTop?.isActive = true

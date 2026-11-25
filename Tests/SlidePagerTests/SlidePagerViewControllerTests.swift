@@ -45,6 +45,53 @@ private final class OverridingPager: SlidePagerViewController {
 }
 
 @MainActor
+private final class SuperInitAfterLoadPager: SlidePagerViewController {
+    override init() {
+        super.init()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        headerView = UIView()
+        currentHeaderHeight = 180
+        pages = [
+            TestListPage(title: "Alpha"),
+            TestListPage(title: "Beta"),
+        ]
+    }
+}
+
+@MainActor
+private final class SuperInitBeforeLoadPager: SlidePagerViewController {
+    let customLabel: String
+
+    init(customLabel: String) {
+        self.customLabel = customLabel
+        super.init()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func viewDidLoad() {
+        pages = [
+            TestListPage(title: customLabel),
+            TestListPage(title: "Second"),
+        ]
+        headerView = UIView()
+        currentHeaderHeight = 140
+        super.viewDidLoad()
+    }
+}
+
+@MainActor
 private final class DelegateRecorder: SlidePagerDelegate {
     var selections: [Int] = []
     var transitions: [Int] = []
@@ -419,6 +466,74 @@ struct SlidePagerViewControllerTests {
 
         #expect(pager.currentHeaderHeight == 0)
         #expect(pager.stickyState == .collapsed)
+    }
+
+    @Test func `Zero-argument init loads cleanly and accepts configuration later`() {
+        let pager = SlidePagerViewController()
+        load(pager)
+
+        #expect(pager.pages.isEmpty)
+        #expect(pager.headerView == nil)
+        #expect(pager.currentHeaderHeight == 0)
+        #expect(pager.tabBarView is UnderlineTabBarView)
+
+        let recorder = DelegateRecorder()
+        pager.delegate = recorder
+
+        pager.headerView = UIView()
+        pager.currentHeaderHeight = 160
+        pager.pages = [
+            TestListPage(title: "First"),
+            TestListPage(title: "Second"),
+        ]
+        pager.view.layoutIfNeeded()
+
+        #expect(pager.pages.count == 2)
+        #expect(pager.currentHeaderHeight == 160)
+        #expect(pager.selectedIndex == 0)
+        #expect(recorder.transitions.isEmpty, "setting initial pages after empty load is not a transition")
+        let bar = pager.tabBarView as? UnderlineTabBarView
+        #expect(bar?.buttons.map(\.accessibilityLabel) == ["First", "Second"])
+
+        pager.selectPage(at: 1, animated: false)
+        #expect(pager.selectedIndex == 1)
+        #expect(recorder.transitions == [1])
+    }
+
+    @Test func `Subclass can call super.init() with nothing and configure after super.viewDidLoad()`() {
+        let pager = SuperInitAfterLoadPager()
+        load(pager)
+
+        #expect(pager.pages.count == 2)
+        #expect(pager.currentHeaderHeight == 180)
+        #expect(pager.stickyState == .expanded)
+        let bar = pager.tabBarView as? UnderlineTabBarView
+        #expect(bar?.buttons.map(\.accessibilityLabel) == ["Alpha", "Beta"])
+
+        pager.outerScrollView.setContentOffset(CGPoint(x: 0, y: 180), animated: false)
+        #expect(pager.stickyState == .collapsed)
+    }
+
+    @Test func `Subclass can call super.init() with nothing and configure before super.viewDidLoad()`() {
+        let pager = SuperInitBeforeLoadPager(customLabel: "Home")
+        load(pager)
+
+        #expect(pager.customLabel == "Home")
+        #expect(pager.pages.count == 2)
+        #expect(pager.currentHeaderHeight == 140)
+        #expect(pager.stickyState == .expanded)
+        let bar = pager.tabBarView as? UnderlineTabBarView
+        #expect(bar?.buttons.map(\.accessibilityLabel) == ["Home", "Second"])
+    }
+
+    @Test func `Subclass inheriting zero-argument init can be created with nothing`() {
+        let pager = OverridingPager()
+        pager.pages = [TestListPage(title: "Inherited")]
+        load(pager)
+
+        #expect(pager.assignedPageCounts == [1])
+        #expect(pager.pages.count == 1)
+        #expect(pager.selectedIndex == 0)
     }
 
     @Test func `Touching the collapse pan fires touch-down before pan begins`() throws {

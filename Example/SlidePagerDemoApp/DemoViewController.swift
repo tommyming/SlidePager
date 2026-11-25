@@ -12,33 +12,20 @@ import SlidePager
 /// The Configure menu assigns the pager's `open` state from this app, which
 /// lives outside the SlidePager module. The header button still animates the
 /// height through `updateHeaderHeight(_:animated:)`.
-public final class DemoViewController: UIViewController, SlidePagerDelegate {
+public final class DemoViewController: SlidePagerViewController, SlidePagerDelegate {
 
-    private var pager: SlidePagerViewController?
     private let stateLabel = UILabel()
-    private let primaryHeader = DemoHeaderView()
-    private let alternateHeader = DemoHeaderView(
-        title: "Replaced header",
-        subtitle: "Assigned through headerView.",
-        background: UIColor.systemTeal.withAlphaComponent(0.22)
-    )
+    private var primaryHeader: DemoHeaderView?
+    private var alternateHeader: DemoHeaderView?
+    private var primaryPages: [UIViewController] = []
+    private var alternatePages: [UIViewController] = []
     private var showingAlternateHeader = false
     private var usingAlternatePages = false
     private var tabsRestyled = false
     private var usingCustomTabBar = false
-    private let primaryPages: [UIViewController] = [
-        DemoListPage(rows: 60, title: "List"),
-        DemoGridPage(itemCount: 120, title: "Grid"),
-        DemoShortPage(title: "Short"),
-        DemoListPage(rows: 12, title: "List 2"),
-    ]
-    private let alternatePages: [UIViewController] = [
-        DemoListPage(rows: 8, title: "Notes"),
-        DemoShortPage(title: "About"),
-    ]
 
-    public init() {
-        super.init(nibName: nil, bundle: nil)
+    public override init() {
+        super.init()
         title = "SlidePager"
     }
 
@@ -49,7 +36,50 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+
         view.backgroundColor = .systemBackground
+
+        // The demo pager itself is this view controller. Build its header, tabs,
+        // and child pages here, then configure the empty pager instance.
+        let primaryHeader = DemoHeaderView()
+        let alternateHeader = DemoHeaderView(
+            title: "Replaced header",
+            subtitle: "Assigned through headerView.",
+            background: UIColor.systemTeal.withAlphaComponent(0.22)
+        )
+        let primaryPages: [UIViewController] = [
+            DemoListPage(rows: 60, title: "List"),
+            DemoGridPage(itemCount: 120, title: "Grid"),
+            DemoShortPage(title: "Short"),
+            DemoListPage(rows: 12, title: "List 2"),
+        ]
+        let alternatePages: [UIViewController] = [
+            DemoListPage(rows: 8, title: "Notes"),
+            DemoShortPage(title: "About"),
+        ]
+        self.primaryHeader = primaryHeader
+        self.alternateHeader = alternateHeader
+        self.primaryPages = primaryPages
+        self.alternatePages = alternatePages
+
+        let toggleHeight = { [weak self] in
+            guard let self else { return }
+            let midpoint = (DemoHeaderView.collapsedHeight + DemoHeaderView.expandedHeight) / 2
+            let grown = self.currentHeaderHeight > midpoint
+            self.updateHeaderHeight(
+                grown ? DemoHeaderView.collapsedHeight : DemoHeaderView.expandedHeight,
+                animated: true
+            )
+        }
+        primaryHeader.onToggleHeight = toggleHeight
+        alternateHeader.onToggleHeight = toggleHeight
+
+        headerView = primaryHeader
+        currentHeaderHeight = DemoHeaderView.expandedHeight
+        tabBarView = UnderlineTabBarView(titles: titles(of: primaryPages))
+        pages = primaryPages
+        delegate = self
+
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             image: UIImage(systemName: "slider.horizontal.3"),
             menu: UIMenu(title: "Configure", children: [
@@ -59,38 +89,6 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
             ])
         )
         navigationItem.rightBarButtonItem?.accessibilityLabel = "Configure"
-
-        let tabBar = UnderlineTabBarView(titles: titles(of: primaryPages))
-        let pager = SlidePagerViewController(
-            header: primaryHeader,
-            headerHeight: DemoHeaderView.expandedHeight,
-            tabBar: tabBar,
-            pages: primaryPages
-        )
-        pager.delegate = self
-        let toggleHeight = { [weak pager] in
-            guard let pager else { return }
-            let midpoint = (DemoHeaderView.collapsedHeight + DemoHeaderView.expandedHeight) / 2
-            let grown = pager.currentHeaderHeight > midpoint
-            pager.updateHeaderHeight(
-                grown ? DemoHeaderView.collapsedHeight : DemoHeaderView.expandedHeight,
-                animated: true
-            )
-        }
-        primaryHeader.onToggleHeight = toggleHeight
-        alternateHeader.onToggleHeight = toggleHeight
-
-        addChild(pager)
-        pager.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(pager.view)
-        NSLayoutConstraint.activate([
-            pager.view.topAnchor.constraint(equalTo: view.topAnchor),
-            pager.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            pager.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            pager.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
-        pager.didMove(toParent: self)
-        self.pager = pager
 
         stateLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         stateLabel.textColor = .secondaryLabel
@@ -106,11 +104,9 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
 
     // MARK: - External configuration
 
-    /// Menu actions assign `open` state. They do not call the library's methods
-    /// except where animation is the point of the header button.
+    /// Menu actions assign the pager's `open` state directly from this subclass.
     private func configureActions() -> [UIMenuElement] {
-        guard pager != nil else { return [] }
-        return [
+        [
             UIMenu(title: "Sticky state", children: [
                 stickyAction("Expanded", state: .expanded),
                 stickyAction("Halfway", state: .partiallyCollapsed(progress: 0.5)),
@@ -137,13 +133,12 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
 
     private func stickyAction(_ title: String, state: StickyState) -> UIAction {
         UIAction(title: title, state: stickyMatches(state) ? .on : .off) { [weak self] _ in
-            self?.pager?.stickyState = state
+            self?.stickyState = state
         }
     }
 
     private func stickyMatches(_ state: StickyState) -> Bool {
-        guard let current = pager?.stickyState else { return false }
-        switch (current, state) {
+        switch (stickyState, state) {
         case (.expanded, .expanded), (.collapsed, .collapsed):
             return true
         case (.partiallyCollapsed(let progress), .partiallyCollapsed(let target)):
@@ -154,35 +149,32 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
     }
 
     private func selectPageActions() -> [UIAction] {
-        guard let pager else { return [] }
-        return pager.pages.enumerated().map { index, page in
+        pages.enumerated().map { index, page in
             UIAction(
                 title: page.title ?? "Tab \(index + 1)",
-                state: pager.selectedIndex == index ? .on : .off
+                state: selectedIndex == index ? .on : .off
             ) { [weak self] _ in
-                self?.pager?.selectedIndex = index
+                self?.selectedIndex = index
             }
         }
     }
 
     private func togglePages() {
-        guard let pager else { return }
         usingAlternatePages.toggle()
-        pager.pages = usingAlternatePages ? alternatePages : primaryPages
+        pages = usingAlternatePages ? alternatePages : primaryPages
         refreshStateLabel()
     }
 
     private func toggleHeader() {
-        guard let pager else { return }
+        guard let primaryHeader, let alternateHeader else { return }
         showingAlternateHeader.toggle()
-        pager.headerView = showingAlternateHeader ? alternateHeader : primaryHeader
+        headerView = showingAlternateHeader ? alternateHeader : primaryHeader
     }
 
     private func assignHeaderHeight() {
-        guard let pager else { return }
         let midpoint = (DemoHeaderView.collapsedHeight + DemoHeaderView.expandedHeight) / 2
-        let grown = pager.currentHeaderHeight > midpoint
-        pager.currentHeaderHeight = grown ? DemoHeaderView.collapsedHeight : DemoHeaderView.expandedHeight
+        let grown = currentHeaderHeight > midpoint
+        currentHeaderHeight = grown ? DemoHeaderView.collapsedHeight : DemoHeaderView.expandedHeight
     }
 
     private func toggleTabStyle() {
@@ -191,7 +183,7 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
     }
 
     private func applyTabStyle() {
-        guard let bar = pager?.tabBarView as? UnderlineTabBarView else { return }
+        guard let bar = tabBarView as? UnderlineTabBarView else { return }
         bar.underlineColor = tabsRestyled ? .systemPink : .systemBlue
         bar.titleFont = tabsRestyled
             ? .systemFont(ofSize: 17, weight: .bold)
@@ -202,13 +194,12 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
     }
 
     private func toggleTabBar() {
-        guard let pager else { return }
         usingCustomTabBar.toggle()
-        let titles = titles(of: pager.pages)
+        let pageTitles = titles(of: pages)
         let bar: UnderlineTabBarView = usingCustomTabBar
-            ? DemoTabBar(titles: titles)
-            : UnderlineTabBarView(titles: titles)
-        pager.tabBarView = bar
+            ? DemoTabBar(titles: pageTitles)
+            : UnderlineTabBarView(titles: pageTitles)
+        tabBarView = bar
         applyTabStyle()
     }
 
@@ -219,11 +210,10 @@ public final class DemoViewController: UIViewController, SlidePagerDelegate {
     }
 
     private func refreshStateLabel() {
-        guard let pager else { return }
-        let title = pager.pages.indices.contains(pager.selectedIndex)
-            ? (pager.pages[pager.selectedIndex].title ?? "Tab")
+        let title = pages.indices.contains(selectedIndex)
+            ? (pages[selectedIndex].title ?? "Tab")
             : "—"
-        stateLabel.text = "\(title) · \(pager.stickyState)"
+        stateLabel.text = "\(title) · \(stickyState)"
     }
 
     // MARK: - SlidePagerDelegate
